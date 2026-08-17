@@ -1,0 +1,25 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.tcgrestock.monitor'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.tcgrestock.monitor"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "0.01"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+dependencies {
+}
