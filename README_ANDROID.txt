@@ -1,10 +1,61 @@
-TCG Restock Monitor MV0.01 — Android Sideload Build
+TCG Restock Monitor MV0.05 — Alert Deep-Link Update
+
+NEW IN MV0.05
+-------------
+- Added a dedicated Alerts tab.
+- Triggered restocks are saved in their own alert cards.
+- Tapping a restock notification opens directly to the Alerts tab.
+- Single-item alerts carry the exact product URL into the app.
+- Alert cards provide Open Product, Silence 24h, Go to Product, and History.
+- Triggered alerts persist across app restarts until cleared.
+
+TCG Restock Monitor MV0.04 — Bottom Navigation Update
+
+NEW IN MV0.04
+-------------
+- Added four bottom navigation tabs:
+  * Products
+  * In Stock
+  * Activity
+  * Settings
+- Tabs stay reachable at the bottom of the screen for one-thumb use.
+- In Stock tab shows only currently available products, with Open and Silence 24h actions.
+- Activity tab shows recent product check/status activity.
+- Settings tab collects app settings, data location, and refresh controls.
+- Products tab keeps the compact random Pokémon section, monitor controls, and product cards.
+- All prior MV0.03 phone-friendly controls and large touch targets remain.
+
+TCG Restock Monitor MV0.03 — Mobile UI Update
+
+NEW IN MV0.03
+-------------
+- Added a fixed bottom action bar with Start/Stop, Check, and + Product.
+- Main controls stay reachable with one thumb even when scrolled deep into the product list.
+- Increased button/touch target sizes.
+- Product cards now use two rows of larger buttons instead of four cramped buttons.
+- Compact top header saves vertical space.
+- Random Pokémon section can be hidden/shown.
+- Settings and Data buttons remain near the top but use larger mobile-friendly targets.
+- Product details are condensed for narrow screens.
+- Long-press a product card to delete it.
+
+All MV0.02 monitoring, notifications, price history, snooze, price-drop, and foreground-service
+features remain.
+
+TCG Restock Monitor MV0.02 — Android Sideload Build
+
+CHANGED
+-------
+- Removed the Pokémon logo from the Android app.
+- Removed the One Piece logo from the Android app.
+- The header now uses only the neutral TCG Restock Monitor title.
+- Replaced the launcher icon with a neutral TCG icon.
+- No Pokémon or One Piece logo image resources are included.
 
 This is the native Android edition of the desktop restock monitor.
 
 WHAT IS INCLUDED
 - Direct-install Android project (no Play Store required)
-- Pokémon + One Piece logos
 - Product list seeded from the desktop app
 - Foreground monitoring service
 - Persistent “monitoring active” notification
@@ -21,7 +72,7 @@ WHAT IS INCLUDED
 
 INSTALL / BUILD
 1. Install Android Studio on Windows, macOS, or Linux.
-2. Open the TCG_Restock_Monitor_MV0.01_Android folder.
+2. Open the TCG_Restock_Monitor_MV0.05_Android folder.
 3. Allow Android Studio to install the requested SDK / build tools and accept Google's SDK licenses.
 4. Choose Build > Build APK(s).
 5. The debug APK is normally created at:
@@ -40,4 +91,4 @@ DATA
 Android stores products.json, settings.json, and price_history.json in the app's private files directory.
 Deleting the app normally deletes those files unless Android backup restores them.
 
-This is a pre-release MV0.01 build and is intended for personal sideload/testing.
+This is a pre-release MV0.05 build and is intended for personal sideload/testing.

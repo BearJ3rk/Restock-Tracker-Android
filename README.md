@@ -1,6 +1,6 @@
 # TCG Restock Monitor for Android
 
-Native Android restock and price monitor for selected Pokemon, One Piece, and other trading-card products. The current sideload release is **v0.02**.
+Native Android restock and price monitor for selected Pokemon, One Piece, and other trading-card products. The current mobile build is **MV0.05**.
 
 ## Install and update
 
@@ -8,11 +8,13 @@ Signed, installable versions are published on the repository's **Releases** page
 
 For the first installation, allow **Install unknown apps** for the app used to open the APK. For an in-app update, Android may ask once to allow TCG Restock Monitor to request installations. Android always controls the final installation confirmation.
 
-> The original v0.01 debug APK used an ephemeral debug certificate. Uninstall it once before installing signed v0.02. Beginning with v0.02, releases use the same protected signing key and install over one another without deleting app data.
+> The original v0.01 debug APK used an ephemeral debug certificate. Uninstall it once before installing any signed v0.02-or-newer release. Beginning with v0.02, releases use the same protected signing key and install over one another without deleting app data.
+
+MV0.05 adds mobile bottom navigation, dedicated In Stock, Alerts, Activity, and Settings pages, persistent triggered-alert cards, and notification deep links into the Alerts page.
 
 ## Automated builds
 
-Every push to `main` starts **Build Android APK** and produces a temporary debug APK for development testing. Version tags such as `v0.02` start **Publish Signed Android Release**, which signs the release APK, verifies its signature, creates a checksum, and publishes both files on GitHub Releases.
+Every push to `main` starts **Build Android APK** and produces a temporary debug APK for development testing. Version tags such as `v0.05` start **Publish Signed Android Release**, which signs the release APK, verifies its signature, creates a checksum, and publishes both files on GitHub Releases.
 
 The release keystore and its passwords are stored only as encrypted GitHub Actions secrets. Signing material is never committed to this repository.
 

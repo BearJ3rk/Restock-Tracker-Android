@@ -137,7 +137,36 @@ public class MonitorService extends Service {
         } catch (Exception ignored) {}
     }
 
+    private void saveTriggeredAlerts(ArrayList<JSONObject> items) {
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences("alerts", MODE_PRIVATE);
+            JSONArray existing = new JSONArray(prefs.getString("triggered_items", "[]"));
+            long now = System.currentTimeMillis() / 1000L;
+
+            for (JSONObject p : items) {
+                JSONObject row = new JSONObject();
+                row.put("name", p.optString("name","Product"));
+                row.put("url", p.optString("url",""));
+                row.put("status", p.optString("status","IN STOCK"));
+                if (p.has("current_price")) row.put("current_price", p.opt("current_price"));
+                row.put("triggered_at", now);
+                existing.put(row);
+            }
+
+            if (existing.length() > 100) {
+                JSONArray trimmed = new JSONArray();
+                for (int i = existing.length() - 100; i < existing.length(); i++) {
+                    trimmed.put(existing.get(i));
+                }
+                existing = trimmed;
+            }
+
+            prefs.edit().putString("triggered_items", existing.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
     private void postGroupedAlert(ArrayList<JSONObject> items) {
+        saveTriggeredAlerts(items);
         try {
             Notification.InboxStyle style = new Notification.InboxStyle();
             int max = Math.min(items.size(), 6);
@@ -150,7 +179,13 @@ public class MonitorService extends Service {
             style.setSummaryText(items.size()+" item(s) available");
             Intent open = new Intent(this, MainActivity.class);
             open.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            PendingIntent pi = PendingIntent.getActivity(this, 47, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            open.putExtra("open_triggered_alerts", true);
+            if (items.size() == 1) {
+                open.putExtra("alert_url", items.get(0).optString("url",""));
+            }
+            PendingIntent pi = PendingIntent.getActivity(
+                    this, 47, open,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             Notification n = new Notification.Builder(this, CHANNEL_ALERTS)
                     .setSmallIcon(android.R.drawable.stat_notify_more)
                     .setContentTitle("TCG Restock Alert")

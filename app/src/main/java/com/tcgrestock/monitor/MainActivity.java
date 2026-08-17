@@ -20,6 +20,9 @@ import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
     private LinearLayout root, listBox;
+    private LinearLayout screen, contentHost, productsPage, inStockPage, triggeredPage, activityPage, settingsPage;
+    private JSONArray triggeredItems = new JSONArray();
+    private TextView activityText;
     private TextView pokemonName, pokemonFact, monitorState, updateStatus;
     private ImageView pokemonImage;
     private Button learnMoreButton, startStopButton, updateButton;
@@ -48,64 +51,266 @@ public class MainActivity extends Activity {
             registerReceiver(dataReceiver, dataFilter);
         }
         schedulePokemon();
+        handleAlertIntent(getIntent());
         checkForUpdates(false);
     }
 
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleAlertIntent(intent);
+    }
+
+    private void handleAlertIntent(Intent intent) {
+        if (intent == null) return;
+        String alertUrl = intent.getStringExtra("alert_url");
+        if ((alertUrl != null && !alertUrl.isEmpty())
+                || intent.getBooleanExtra("open_triggered_alerts", false)) {
+            showPage("triggered");
+            renderTriggeredPage();
+        }
+    }
+
     private void buildUi() {
+        screen = new LinearLayout(this);
+        screen.setOrientation(LinearLayout.VERTICAL);
+
+        GradientDrawable screenBg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.rgb(40,45,53), Color.rgb(24,29,35)}
+        );
+        screen.setBackground(screenBg);
+
+        // Compact top header.
+        LinearLayout header = row();
+        header.setPadding(dp(10), dp(8), dp(10), dp(4));
+        TextView title = text("TCG RESTOCK MONITOR", 18, true);
+        TextView version = text("MV" + BuildConfig.VERSION_NAME, 12, false);
+        version.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        header.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1));
+        header.addView(version, new LinearLayout.LayoutParams(dp(74), dp(44)));
+        screen.addView(header);
+
+        // Main page host.
+        contentHost = new LinearLayout(this);
+        contentHost.setOrientation(LinearLayout.VERTICAL);
+        screen.addView(contentHost, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+
+        buildProductsPage();
+        buildInStockPage();
+        buildTriggeredPage();
+        buildActivityPage();
+        buildSettingsPage();
+
+        // Bottom navigation stays reachable by thumb.
+        LinearLayout nav = new LinearLayout(this);
+        nav.setOrientation(LinearLayout.HORIZONTAL);
+        nav.setPadding(dp(4), dp(4), dp(4), dp(6));
+        GradientDrawable navBg = new GradientDrawable();
+        navBg.setColor(Color.rgb(31,35,42));
+        navBg.setStroke(dp(1), Color.rgb(72,80,90));
+        nav.setBackground(navBg);
+
+        Button productsTab = button("Products", v -> showPage("products"));
+        Button stockTab = button("In Stock", v -> showPage("stock"));
+        Button triggeredTab = button("Alerts", v -> showPage("triggered"));
+        Button activityTab = button("Activity", v -> showPage("activity"));
+        Button settingsTab = button("Settings", v -> showPage("settings"));
+
+        productsTab.setMinHeight(dp(58));
+        stockTab.setMinHeight(dp(58));
+        triggeredTab.setMinHeight(dp(58));
+        activityTab.setMinHeight(dp(58));
+        settingsTab.setMinHeight(dp(58));
+
+        nav.addView(productsTab, new LinearLayout.LayoutParams(0, dp(60), 1));
+        nav.addView(stockTab, new LinearLayout.LayoutParams(0, dp(60), 1));
+        nav.addView(triggeredTab, new LinearLayout.LayoutParams(0, dp(60), 1));
+        nav.addView(activityTab, new LinearLayout.LayoutParams(0, dp(60), 1));
+        nav.addView(settingsTab, new LinearLayout.LayoutParams(0, dp(60), 1));
+
+        screen.addView(nav);
+        setContentView(screen);
+
+        showPage("products");
+    }
+
+    private void buildProductsPage() {
         ScrollView scroll = new ScrollView(this);
-        root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(12),dp(12),dp(12),dp(24));
-        applyBackground();
-        scroll.addView(root);
-        setContentView(scroll);
+        scroll.setFillViewport(true);
 
-        LinearLayout logos = row();
-        ImageView pLogo = new ImageView(this);
-        pLogo.setImageResource(com.tcgrestock.monitor.R.drawable.pokemon_logo);
-        pLogo.setAdjustViewBounds(true); pLogo.setMaxHeight(dp(70));
-        ImageView oLogo = new ImageView(this);
-        oLogo.setImageResource(com.tcgrestock.monitor.R.drawable.one_piece_logo);
-        oLogo.setAdjustViewBounds(true); oLogo.setMaxHeight(dp(70));
-        logos.addView(pLogo,new LinearLayout.LayoutParams(0,dp(72),1));
-        logos.addView(oLogo,new LinearLayout.LayoutParams(0,dp(72),1));
-        root.addView(logos);
+        productsPage = new LinearLayout(this);
+        productsPage.setOrientation(LinearLayout.VERTICAL);
+        productsPage.setPadding(dp(10), dp(2), dp(10), dp(10));
+        scroll.addView(productsPage);
 
-        TextView title = text("TCG RESTOCK MONITOR  v" + BuildConfig.VERSION_NAME,20,true);
-        title.setGravity(Gravity.CENTER); root.addView(title);
-
+        // Random Pokémon card.
         LinearLayout pokeCard = panel();
+        LinearLayout pokeTop = row();
+        TextView pokeHeading = text("Random Pokémon", 15, true);
+        Button collapsePokemon = button("Hide", v -> {
+            View details = pokeCard.findViewWithTag("pokemon_details");
+            if (details != null) {
+                boolean visible = details.getVisibility() == View.VISIBLE;
+                details.setVisibility(visible ? View.GONE : View.VISIBLE);
+                ((Button)v).setText(visible ? "Show" : "Hide");
+            }
+        });
+        pokeTop.addView(pokeHeading, new LinearLayout.LayoutParams(0, dp(46), 1));
+        pokeTop.addView(collapsePokemon, new LinearLayout.LayoutParams(dp(86), dp(46)));
+        pokeCard.addView(pokeTop);
+
         LinearLayout pokeRow = row();
-        pokemonImage = new ImageView(this); pokemonImage.setAdjustViewBounds(true);
-        pokeRow.addView(pokemonImage,new LinearLayout.LayoutParams(dp(120),dp(120)));
-        LinearLayout facts = new LinearLayout(this); facts.setOrientation(LinearLayout.VERTICAL);
-        pokemonName=text("Loading Pokémon…",17,true); facts.addView(pokemonName);
-        pokemonFact=text("Loading a fun fact…",14,false); facts.addView(pokemonFact);
+        pokeRow.setTag("pokemon_details");
+        pokemonImage = new ImageView(this);
+        pokemonImage.setAdjustViewBounds(true);
+        pokeRow.addView(pokemonImage, new LinearLayout.LayoutParams(dp(92), dp(92)));
+
+        LinearLayout facts = new LinearLayout(this);
+        facts.setOrientation(LinearLayout.VERTICAL);
+        pokemonName = text("Loading Pokémon…", 16, true);
+        pokemonFact = text("Loading a fun fact…", 13, false);
         learnMoreButton = button("Learn More", v -> openPokemon());
-        facts.addView(learnMoreButton);
-        pokeRow.addView(facts,new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));
-        pokeCard.addView(pokeRow); root.addView(pokeCard);
+        facts.addView(pokemonName);
+        facts.addView(pokemonFact);
+        facts.addView(learnMoreButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+        pokeRow.addView(facts, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        pokeCard.addView(pokeRow);
+        productsPage.addView(pokeCard);
 
-        LinearLayout controls = panel();
-        monitorState=text("Monitoring stopped",15,true); controls.addView(monitorState);
-        LinearLayout buttons=row();
-        startStopButton=button("Start Monitoring",v->toggleMonitoring());
-        buttons.addView(startStopButton,new LinearLayout.LayoutParams(0,dp(48),1));
-        buttons.addView(button("Check Now",v->checkNow()),new LinearLayout.LayoutParams(0,dp(48),1));
-        buttons.addView(button("Add Product",v->editProduct(-1)),new LinearLayout.LayoutParams(0,dp(48),1));
-        controls.addView(buttons);
-        LinearLayout buttons2=row();
-        buttons2.addView(button("Settings",v->showSettings()),new LinearLayout.LayoutParams(0,dp(44),1));
-        updateButton=button("Check Updates",v->checkForUpdates(true));
-        buttons2.addView(updateButton,new LinearLayout.LayoutParams(0,dp(44),1));
-        buttons2.addView(button("Data Folder",v->showDataPath()),new LinearLayout.LayoutParams(0,dp(44),1));
-        controls.addView(buttons2);
-        updateStatus=text("App version " + BuildConfig.VERSION_NAME,12,false);
-        controls.addView(updateStatus);
-        root.addView(controls);
+        // Monitor state + quick actions.
+        LinearLayout monitorCard = panel();
+        monitorState = text("Monitoring stopped", 15, true);
+        monitorCard.addView(monitorState);
 
-        TextView productHeader=text("Products",18,true); root.addView(productHeader);
-        listBox=new LinearLayout(this);listBox.setOrientation(LinearLayout.VERTICAL);root.addView(listBox);
+        LinearLayout quick = row();
+        startStopButton = button("Start", v -> toggleMonitoring());
+        Button checkButton = button("Check", v -> checkNow());
+        Button addButton = button("+ Product", v -> editProduct(-1));
+        quick.addView(startStopButton, new LinearLayout.LayoutParams(0, dp(52), 1));
+        quick.addView(checkButton, new LinearLayout.LayoutParams(0, dp(52), 1));
+        quick.addView(addButton, new LinearLayout.LayoutParams(0, dp(52), 1));
+        monitorCard.addView(quick);
+        productsPage.addView(monitorCard);
+
+        TextView productHeader = text("Products", 18, true);
+        productsPage.addView(productHeader);
+
+        listBox = new LinearLayout(this);
+        listBox.setOrientation(LinearLayout.VERTICAL);
+        productsPage.addView(listBox);
+
+        contentHost.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        scroll.setTag("products_page");
+    }
+
+    private void buildInStockPage() {
+        ScrollView scroll = new ScrollView(this);
+        inStockPage = new LinearLayout(this);
+        inStockPage.setOrientation(LinearLayout.VERTICAL);
+        inStockPage.setPadding(dp(10), dp(6), dp(10), dp(10));
+        scroll.addView(inStockPage);
+        scroll.setTag("stock_page");
+        contentHost.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void buildTriggeredPage() {
+        ScrollView scroll = new ScrollView(this);
+        triggeredPage = new LinearLayout(this);
+        triggeredPage.setOrientation(LinearLayout.VERTICAL);
+        triggeredPage.setPadding(dp(10), dp(6), dp(10), dp(10));
+        scroll.addView(triggeredPage);
+        scroll.setTag("triggered_page");
+        contentHost.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void buildActivityPage() {
+        ScrollView scroll = new ScrollView(this);
+        activityPage = new LinearLayout(this);
+        activityPage.setOrientation(LinearLayout.VERTICAL);
+        activityPage.setPadding(dp(10), dp(6), dp(10), dp(10));
+
+        TextView heading = text("Activity", 18, true);
+        activityPage.addView(heading);
+
+        activityText = text("No activity yet.", 13, false);
+        activityText.setTextIsSelectable(true);
+        activityPage.addView(activityText);
+
+        scroll.addView(activityPage);
+        scroll.setTag("activity_page");
+        contentHost.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void buildSettingsPage() {
+        ScrollView scroll = new ScrollView(this);
+        settingsPage = new LinearLayout(this);
+        settingsPage.setOrientation(LinearLayout.VERTICAL);
+        settingsPage.setPadding(dp(10), dp(6), dp(10), dp(10));
+
+        TextView heading = text("Settings", 18, true);
+        settingsPage.addView(heading);
+
+        LinearLayout card = panel();
+        Button settingsButton = button("App Settings", v -> showSettings());
+        Button dataButton = button("App Data Location", v -> showDataPath());
+        Button backupButton = button("Refresh Product View", v -> reload());
+        updateButton = button("Check for App Updates", v -> checkForUpdates(true));
+        card.addView(settingsButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        card.addView(dataButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        card.addView(backupButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        card.addView(updateButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        updateStatus = text("App version MV" + BuildConfig.VERSION_NAME, 12, false);
+        card.addView(updateStatus);
+        settingsPage.addView(card);
+
+        TextView tips = text(
+                "Tip: Android may restrict background activity on some phones. "
+                + "If monitoring stops unexpectedly, exclude this app from battery optimization.",
+                13, false
+        );
+        settingsPage.addView(tips);
+
+        scroll.addView(settingsPage);
+        scroll.setTag("settings_page");
+        contentHost.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void showPage(String page) {
+        for (int i = 0; i < contentHost.getChildCount(); i++) {
+            View child = contentHost.getChildAt(i);
+            child.setVisibility(View.GONE);
+        }
+
+        String wanted = page + "_page";
+        for (int i = 0; i < contentHost.getChildCount(); i++) {
+            View child = contentHost.getChildAt(i);
+            if (wanted.equals(child.getTag())) {
+                child.setVisibility(View.VISIBLE);
+                break;
+            }
+        }
+
+        if ("stock".equals(page)) renderInStockPage();
+        if ("triggered".equals(page)) renderTriggeredPage();
+        if ("activity".equals(page)) renderActivityPage();
     }
 
     private void reload() {
@@ -113,33 +318,228 @@ public class MainActivity extends Activity {
         settings=Store.loadSettings(this);
         boolean enabled=settings.optBoolean("monitor_enabled",false);
         monitorState.setText(enabled ? "Monitoring active — foreground service" : "Monitoring stopped");
-        startStopButton.setText(enabled ? "Stop Monitoring" : "Start Monitoring");
+        startStopButton.setText(enabled ? "Stop" : "Start");
         renderProducts();
+        renderInStockPage();
+        renderTriggeredPage();
+        renderActivityPage();
     }
 
     private void renderProducts() {
         listBox.removeAllViews();
+
         for(int i=0;i<products.length();i++) {
-            JSONObject p=products.optJSONObject(i); if(p==null)continue;Store.migrate(p);
+            JSONObject p=products.optJSONObject(i);
+            if(p==null) continue;
+            Store.migrate(p);
             final int idx=i;
+
             LinearLayout card=panel();
-            TextView name=text(p.optString("name","Product"),16,true);card.addView(name);
+
+            // Product name + status first, so the most important information is visible
+            // without wasting horizontal space.
+            TextView name=text(p.optString("name","Product"),16,true);
+            card.addView(name);
+
             String price = p.has("current_price") && !p.optString("current_price","").isEmpty()
                     ? String.format(Locale.US,"$%.2f",p.optDouble("current_price")) : "—";
             String msrp = p.has("msrp") && !p.optString("msrp","").isEmpty()
                     ? String.format(Locale.US,"$%.2f",p.optDouble("msrp")) : "—";
-            TextView info=text(p.optString("status","Waiting...")+"\nPrice: "+price+"   MSRP: "+msrp+
-                    "\nLast checked: "+formatTime(p.optLong("last_checked",0)),13,false);
+
+            String status = p.optString("status","Waiting...");
+            String compact =
+                    status +
+                    "\nPrice: " + price + "   MSRP: " + msrp +
+                    "\nChecked: " + formatTime(p.optLong("last_checked",0));
+
+            TextView info=text(compact,13,false);
             card.addView(info);
-            LinearLayout actions=row();
-            actions.addView(button("Open",v->openProduct(p)),new LinearLayout.LayoutParams(0,dp(42),1));
-            actions.addView(button(p.optBoolean("paused",false)?"Resume":"Pause",v->togglePause(idx)),new LinearLayout.LayoutParams(0,dp(42),1));
-            actions.addView(button("Edit",v->editProduct(idx)),new LinearLayout.LayoutParams(0,dp(42),1));
-            actions.addView(button("History",v->showHistory(p)),new LinearLayout.LayoutParams(0,dp(42),1));
-            card.addView(actions);
+
+            // Two rows of larger buttons are easier to use on narrow screens
+            // than four tiny buttons squeezed onto one line.
+            LinearLayout actions1=row();
+            Button open=button("Open",v->openProduct(p));
+            Button pause=button(p.optBoolean("paused",false)?"Resume":"Pause",v->togglePause(idx));
+            open.setMinHeight(dp(48));
+            pause.setMinHeight(dp(48));
+            actions1.addView(open,new LinearLayout.LayoutParams(0,dp(50),1));
+            actions1.addView(pause,new LinearLayout.LayoutParams(0,dp(50),1));
+            card.addView(actions1);
+
+            LinearLayout actions2=row();
+            Button edit=button("Edit",v->editProduct(idx));
+            Button hist=button("History",v->showHistory(p));
+            edit.setMinHeight(dp(48));
+            hist.setMinHeight(dp(48));
+            actions2.addView(edit,new LinearLayout.LayoutParams(0,dp(50),1));
+            actions2.addView(hist,new LinearLayout.LayoutParams(0,dp(50),1));
+            card.addView(actions2);
+
             card.setOnLongClickListener(v->{ confirmDelete(idx); return true; });
             listBox.addView(card);
         }
+    }
+
+    private void renderInStockPage() {
+        if (inStockPage == null) return;
+        inStockPage.removeAllViews();
+        TextView heading = text("In Stock", 18, true);
+        inStockPage.addView(heading);
+
+        int count = 0;
+        for (int i=0;i<products.length();i++) {
+            JSONObject p = products.optJSONObject(i);
+            if (p == null) continue;
+            String status = p.optString("status","");
+            if (!status.startsWith("IN STOCK")) continue;
+            count++;
+
+            LinearLayout card = panel();
+            card.addView(text(p.optString("name","Product"), 16, true));
+
+            String price = p.has("current_price") && !p.optString("current_price","").isEmpty()
+                    ? String.format(Locale.US,"$%.2f",p.optDouble("current_price")) : "—";
+            card.addView(text(status + "\nPrice: " + price, 13, false));
+
+            LinearLayout actions = row();
+            actions.addView(button("Open", v -> openProduct(p)),
+                    new LinearLayout.LayoutParams(0, dp(48), 1));
+            actions.addView(button("Silence 24h", v -> {
+                try {
+                    p.put("snoozed_until", System.currentTimeMillis()/1000L + 86400);
+                    if (p.has("current_price")) p.put("last_alert_price", p.getDouble("current_price"));
+                    Store.saveProducts(this, products);
+                    reload();
+                } catch (Exception ignored) {}
+            }), new LinearLayout.LayoutParams(0, dp(48), 1));
+            card.addView(actions);
+            inStockPage.addView(card);
+        }
+
+        if (count == 0) {
+            inStockPage.addView(text("No products are currently detected in stock.", 14, false));
+        }
+    }
+
+    private void renderTriggeredPage() {
+        if (triggeredPage == null) return;
+        triggeredPage.removeAllViews();
+
+        LinearLayout headingRow = row();
+        TextView heading = text("Triggered Alerts", 18, true);
+        Button clear = button("Clear", v -> {
+            triggeredItems = new JSONArray();
+            saveTriggeredItems();
+            renderTriggeredPage();
+        });
+        headingRow.addView(heading, new LinearLayout.LayoutParams(0, dp(48), 1));
+        headingRow.addView(clear, new LinearLayout.LayoutParams(dp(90), dp(48)));
+        triggeredPage.addView(headingRow);
+
+        loadTriggeredItems();
+
+        if (triggeredItems.length() == 0) {
+            triggeredPage.addView(text(
+                    "No triggered alerts yet. When a restock alert fires, the product will appear here.",
+                    14, false));
+            return;
+        }
+
+        for (int i = triggeredItems.length() - 1; i >= 0; i--) {
+            JSONObject alert = triggeredItems.optJSONObject(i);
+            if (alert == null) continue;
+
+            String url = alert.optString("url", "");
+            JSONObject product = findProductByUrl(url);
+            final JSONObject p = product != null ? product : alert;
+            final String productUrl = url;
+
+            LinearLayout card = panel();
+            card.addView(text(p.optString("name", "Product"), 16, true));
+
+            String price = p.has("current_price") && !p.optString("current_price","").isEmpty()
+                    ? String.format(Locale.US, "$%.2f", p.optDouble("current_price")) : "—";
+            card.addView(text(
+                    "Triggered: " + formatTime(alert.optLong("triggered_at", 0))
+                    + "\n" + p.optString("status","IN STOCK")
+                    + "\nPrice: " + price,
+                    13, false));
+
+            LinearLayout actions1 = row();
+            actions1.addView(button("Open Product", v -> openProduct(p)),
+                    new LinearLayout.LayoutParams(0, dp(50), 1));
+            actions1.addView(button("Silence 24h", v -> {
+                try {
+                    p.put("snoozed_until", System.currentTimeMillis()/1000L + 86400);
+                    if (p.has("current_price")) p.put("last_alert_price", p.getDouble("current_price"));
+                    Store.saveProducts(this, products);
+                    reload();
+                } catch (Exception ignored) {}
+            }), new LinearLayout.LayoutParams(0, dp(50), 1));
+            card.addView(actions1);
+
+            LinearLayout actions2 = row();
+            actions2.addView(button("Go to Product", v -> goToTriggeredProduct(productUrl)),
+                    new LinearLayout.LayoutParams(0, dp(50), 1));
+            actions2.addView(button("History", v -> showHistory(p)),
+                    new LinearLayout.LayoutParams(0, dp(50), 1));
+            card.addView(actions2);
+
+            triggeredPage.addView(card);
+        }
+    }
+
+    private JSONObject findProductByUrl(String url) {
+        for (int i = 0; i < products.length(); i++) {
+            JSONObject p = products.optJSONObject(i);
+            if (p != null && url.equals(p.optString("url",""))) return p;
+        }
+        return null;
+    }
+
+    private void goToTriggeredProduct(String url) {
+        showPage("products");
+        JSONObject p = findProductByUrl(url);
+        if (p != null) {
+            Toast.makeText(this, "Triggered item: " + p.optString("name","Product"),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void loadTriggeredItems() {
+        try {
+            String raw = getSharedPreferences("alerts", MODE_PRIVATE)
+                    .getString("triggered_items", "[]");
+            triggeredItems = new JSONArray(raw);
+        } catch (Exception e) {
+            triggeredItems = new JSONArray();
+        }
+    }
+
+    private void saveTriggeredItems() {
+        getSharedPreferences("alerts", MODE_PRIVATE)
+                .edit()
+                .putString("triggered_items", triggeredItems.toString())
+                .apply();
+    }
+
+    private void renderActivityPage() {
+        if (activityText == null) return;
+        StringBuilder b = new StringBuilder();
+        for (int i = products.length() - 1; i >= 0; i--) {
+            JSONObject p = products.optJSONObject(i);
+            if (p == null) continue;
+            long checked = p.optLong("last_checked",0);
+            if (checked <= 0) continue;
+            b.append(formatTime(checked))
+                    .append("  ")
+                    .append(p.optString("name","Product"))
+                    .append("\n")
+                    .append(p.optString("status","Waiting..."))
+                    .append("\n\n");
+            if (b.length() > 6000) break;
+        }
+        activityText.setText(b.length() == 0 ? "No activity yet." : b.toString());
     }
 
     private void toggleMonitoring() {
@@ -275,9 +675,10 @@ public class MainActivity extends Activity {
 
             @Override public void onUpdateAvailable(UpdateManager.ReleaseInfo release) {
                 updateButton.setEnabled(true);
-                updateStatus.setText("Version " + release.version + " is available");
+                updateStatus.setText("MV" + release.version + " is available");
                 String notes = release.notes.trim();
-                String message = "Installed: " + BuildConfig.VERSION_NAME + "\nAvailable: " + release.version;
+                String message = "Installed: MV" + BuildConfig.VERSION_NAME
+                        + "\nAvailable: MV" + release.version;
                 if (!notes.isEmpty()) message += "\n\n" + notes;
                 new AlertDialog.Builder(MainActivity.this)
                         .setTitle("App update available")
@@ -292,8 +693,10 @@ public class MainActivity extends Activity {
 
             @Override public void onUpToDate() {
                 updateButton.setEnabled(true);
-                updateStatus.setText("App is up to date — version " + BuildConfig.VERSION_NAME);
-                if (userInitiated) Toast.makeText(MainActivity.this, "You have the latest version", Toast.LENGTH_SHORT).show();
+                updateStatus.setText("App is up to date — MV" + BuildConfig.VERSION_NAME);
+                if (userInitiated) {
+                    Toast.makeText(MainActivity.this, "You have the latest version", Toast.LENGTH_SHORT).show();
+                }
             }
 
             @Override public void onError(String message) {
@@ -358,7 +761,16 @@ public class MainActivity extends Activity {
     }
     private LinearLayout row(){LinearLayout r=new LinearLayout(this);r.setOrientation(LinearLayout.HORIZONTAL);return r;}
     private TextView text(String s,int size,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(Color.WHITE);if(bold)t.setTypeface(null,1);t.setPadding(dp(4),dp(4),dp(4),dp(4));return t;}
-    private Button button(String s,View.OnClickListener l){Button b=new Button(this);b.setText(s);b.setOnClickListener(l);return b;}
+    private Button button(String s,View.OnClickListener l){
+        Button b=new Button(this);
+        b.setText(s);
+        b.setTextSize(13);
+        b.setAllCaps(false);
+        b.setMinHeight(dp(46));
+        b.setPadding(dp(8),dp(4),dp(8),dp(4));
+        b.setOnClickListener(l);
+        return b;
+    }
     private EditText input(String hint,String value){EditText e=new EditText(this);e.setHint(hint);e.setText(value);return e;}
     private int dp(int v){return (int)(v*getResources().getDisplayMetrics().density+.5f);}
     private String formatTime(long ts){if(ts<=0)return "—";return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US).format(new Date(ts*1000));}
