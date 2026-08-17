@@ -6,6 +6,10 @@ android {
     namespace 'com.tcgrestock.monitor'
     compileSdk 35
 
+    buildFeatures {
+        buildConfig true
+    }
+
     defaultConfig {
         applicationId "com.tcgrestock.monitor"
         minSdk 26
