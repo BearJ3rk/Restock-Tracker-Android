@@ -20,12 +20,13 @@ import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
     private LinearLayout root, listBox;
-    private TextView pokemonName, pokemonFact, monitorState;
+    private TextView pokemonName, pokemonFact, monitorState, updateStatus;
     private ImageView pokemonImage;
-    private Button learnMoreButton, startStopButton;
+    private Button learnMoreButton, startStopButton, updateButton;
     private JSONArray products = new JSONArray();
     private JSONObject settings = new JSONObject();
     private final ScheduledExecutorService pokemonScheduler = Executors.newSingleThreadScheduledExecutor();
+    private UpdateManager updateManager;
     private String currentPokemonName = "";
     private int currentPokemonId = 0;
 
@@ -37,6 +38,7 @@ public class MainActivity extends Activity {
         super.onCreate(saved);
         settings = Store.loadSettings(this);
         requestNotificationPermission();
+        updateManager = new UpdateManager(this);
         buildUi();
         reload();
         IntentFilter dataFilter = new IntentFilter("com.tcgrestock.monitor.DATA_CHANGED");
@@ -46,6 +48,7 @@ public class MainActivity extends Activity {
             registerReceiver(dataReceiver, dataFilter);
         }
         schedulePokemon();
+        checkForUpdates(false);
     }
 
     private void buildUi() {
@@ -68,7 +71,7 @@ public class MainActivity extends Activity {
         logos.addView(oLogo,new LinearLayout.LayoutParams(0,dp(72),1));
         root.addView(logos);
 
-        TextView title = text("TCG RESTOCK MONITOR  MV0.01",20,true);
+        TextView title = text("TCG RESTOCK MONITOR  v" + BuildConfig.VERSION_NAME,20,true);
         title.setGravity(Gravity.CENTER); root.addView(title);
 
         LinearLayout pokeCard = panel();
@@ -93,8 +96,12 @@ public class MainActivity extends Activity {
         controls.addView(buttons);
         LinearLayout buttons2=row();
         buttons2.addView(button("Settings",v->showSettings()),new LinearLayout.LayoutParams(0,dp(44),1));
+        updateButton=button("Check Updates",v->checkForUpdates(true));
+        buttons2.addView(updateButton,new LinearLayout.LayoutParams(0,dp(44),1));
         buttons2.addView(button("Data Folder",v->showDataPath()),new LinearLayout.LayoutParams(0,dp(44),1));
         controls.addView(buttons2);
+        updateStatus=text("App version " + BuildConfig.VERSION_NAME,12,false);
+        controls.addView(updateStatus);
         root.addView(controls);
 
         TextView productHeader=text("Products",18,true); root.addView(productHeader);
@@ -247,6 +254,62 @@ public class MainActivity extends Activity {
                 .setPositiveButton("OK",null).show();
     }
 
+    private void checkForUpdates(boolean userInitiated) {
+        if (!userInitiated) {
+            long lastCheck = getSharedPreferences("updater", MODE_PRIVATE)
+                    .getLong("last_check", 0L);
+            if (System.currentTimeMillis() - lastCheck < TimeUnit.HOURS.toMillis(24)) return;
+        }
+        getSharedPreferences("updater", MODE_PRIVATE).edit()
+                .putLong("last_check", System.currentTimeMillis()).apply();
+        updateButton.setEnabled(false);
+        updateManager.check(updateCallback(userInitiated));
+    }
+
+    private UpdateManager.Callback updateCallback(boolean userInitiated) {
+        return new UpdateManager.Callback() {
+            @Override public void onStatus(String message) {
+                updateButton.setEnabled(true);
+                updateStatus.setText(message);
+            }
+
+            @Override public void onUpdateAvailable(UpdateManager.ReleaseInfo release) {
+                updateButton.setEnabled(true);
+                updateStatus.setText("Version " + release.version + " is available");
+                String notes = release.notes.trim();
+                String message = "Installed: " + BuildConfig.VERSION_NAME + "\nAvailable: " + release.version;
+                if (!notes.isEmpty()) message += "\n\n" + notes;
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("App update available")
+                        .setMessage(message)
+                        .setPositiveButton("Download & Install", (dialog, which) -> {
+                            updateButton.setEnabled(false);
+                            updateManager.downloadAndInstall(release, updateCallback(true));
+                        })
+                        .setNegativeButton("Later", null)
+                        .show();
+            }
+
+            @Override public void onUpToDate() {
+                updateButton.setEnabled(true);
+                updateStatus.setText("App is up to date — version " + BuildConfig.VERSION_NAME);
+                if (userInitiated) Toast.makeText(MainActivity.this, "You have the latest version", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override public void onError(String message) {
+                updateButton.setEnabled(true);
+                updateStatus.setText("Update check unavailable");
+                if (userInitiated) {
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("Could not update")
+                            .setMessage(message)
+                            .setPositiveButton("OK", null)
+                            .show();
+                }
+            }
+        };
+    }
+
     private void schedulePokemon() {
         pokemonScheduler.schedule(this::loadPokemon,0,TimeUnit.SECONDS);
     }
@@ -302,9 +365,15 @@ public class MainActivity extends Activity {
     private String titleCase(String s){StringBuilder b=new StringBuilder();for(String x:s.split(" ")){if(x.length()>0)b.append(Character.toUpperCase(x.charAt(0))).append(x.substring(1)).append(" ");}return b.toString().trim();}
     private void applyBackground(){GradientDrawable g=new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{Color.rgb(40,45,53),Color.rgb(24,29,35)});root.setBackground(g);}
 
+    @Override protected void onResume() {
+        super.onResume();
+        if (updateManager != null) updateManager.resumePendingInstall(updateCallback(true));
+    }
+
     @Override protected void onDestroy() {
         try{unregisterReceiver(dataReceiver);}catch(Exception ignored){}
         pokemonScheduler.shutdownNow();
+        if (updateManager != null) updateManager.shutdown();
         super.onDestroy();
     }
 }

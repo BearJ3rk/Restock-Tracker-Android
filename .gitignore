@@ -12,6 +12,8 @@ captures/
 # Signing material and local secrets
 *.jks
 *.keystore
+*.p12
+signing-credentials.*
 keystore.properties
 *.env
 .env*
@@ -19,4 +21,3 @@ keystore.properties
 # Operating-system files
 .DS_Store
 Thumbs.db
-
