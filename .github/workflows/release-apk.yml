@@ -88,11 +88,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --title "TCG Restock Monitor $GITHUB_REF_NAME" \
-            --generate-notes
+          set -euo pipefail
+          published=false
+          for attempt in 1 2 3 4 5; do
+            if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              if gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"; then
+                published=true
+                break
+              fi
+            elif gh release create "$GITHUB_REF_NAME" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "TCG Restock Monitor $GITHUB_REF_NAME" \
+              --generate-notes; then
+              published=true
+              break
+            fi
+            sleep $((attempt * 5))
+          done
+          if [[ "$published" != "true" ]]; then
+            echo "GitHub Release publication failed after five attempts" >&2
+            exit 1
+          fi
 
       - name: Remove signing key
         if: always()
