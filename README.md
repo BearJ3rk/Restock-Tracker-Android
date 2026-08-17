@@ -1,16 +1,31 @@
 # TCG Restock Monitor for Android
 
-Native Android restock and price monitor for selected Pokemon, One Piece, and other trading-card products. This repository contains the pre-release **MV0.01** sideload build.
+Native Android restock and price monitor for selected Pokemon, One Piece, and other trading-card products. The current sideload release is **v0.02**.
 
-## Download the APK
+## Install and update
 
-Every push to `main` starts the **Build Android APK** workflow. Open the latest successful workflow run in the repository's **Actions** tab, then download the `TCG-Restock-Monitor-MV0.01-debug-apk` artifact. Extract the downloaded ZIP to get `app-debug.apk`.
+Signed, installable versions are published on the repository's **Releases** page. The app checks that page when it starts (at most once per day), and the **Check Updates** button can check immediately. When a newer version exists, the app downloads the release APK, verifies its GitHub-provided SHA-256 digest, and opens Android's installer for user confirmation.
 
-On the Android device, allow **Install unknown apps** for the app used to open the APK, install it, launch **TCG Restock Monitor**, grant notification permission, and tap **Start Monitoring**.
+For the first installation, allow **Install unknown apps** for the app used to open the APK. For an in-app update, Android may ask once to allow TCG Restock Monitor to request installations. Android always controls the final installation confirmation.
+
+> The original v0.01 debug APK used an ephemeral debug certificate. Uninstall it once before installing signed v0.02. Beginning with v0.02, releases use the same protected signing key and install over one another without deleting app data.
+
+## Automated builds
+
+Every push to `main` starts **Build Android APK** and produces a temporary debug APK for development testing. Version tags such as `v0.02` start **Publish Signed Android Release**, which signs the release APK, verifies its signature, creates a checksum, and publishes both files on GitHub Releases.
+
+The release keystore and its passwords are stored only as encrypted GitHub Actions secrets. Signing material is never committed to this repository.
+
+To publish a future version:
+
+1. Increase both `versionCode` and `versionName` in `app/build.gradle`.
+2. Commit and push the change to `main`.
+3. Create and push a tag exactly matching `v<versionName>`.
+4. Wait for **Publish Signed Android Release** to publish the APK and checksum.
 
 ## Build locally
 
-Use Android Studio with JDK 17, Android SDK 35, Android Gradle Plugin 8.7.3, and Gradle 8.9. Open this repository, let Gradle sync, and choose **Build > Build App Bundle(s) / APK(s) > Build APK(s)**. The output is:
+Use Android Studio with JDK 17, Android SDK 35, Android Gradle Plugin 8.7.3, and Gradle 8.9. Open this repository, let Gradle sync, and choose **Build > Build App Bundle(s) / APK(s) > Build APK(s)**. The debug APK is written to:
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
