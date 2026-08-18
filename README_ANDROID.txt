@@ -1,3 +1,11 @@
+TCG Restock Monitor MV0.07 — Mobile Icon Update
+
+NEW IN MV0.07
+-------------
+- Added the new custom mobile launcher artwork.
+- Added density-specific legacy and round launcher icons.
+- Added an adaptive launcher icon for modern Android devices.
+
 TCG Restock Monitor MV0.06 — Alert Organization and Price Controls
 
 NEW IN MV0.06
@@ -82,7 +90,7 @@ WHAT IS INCLUDED
 
 INSTALL / BUILD
 1. Install Android Studio on Windows, macOS, or Linux.
-2. Open the TCG_Restock_Monitor_MV0.06_Android folder.
+2. Open the TCG_Restock_Monitor_MV0.07_Android folder.
 3. Allow Android Studio to install the requested SDK / build tools and accept Google's SDK licenses.
 4. Choose Build > Build APK(s).
 5. The debug APK is normally created at:
@@ -101,4 +109,4 @@ DATA
 Android stores products.json, settings.json, and price_history.json in the app's private files directory.
 Deleting the app normally deletes those files unless Android backup restores them.
 
-This is a pre-release MV0.06 build and is intended for personal sideload/testing.
+This is a pre-release MV0.07 build and is intended for personal sideload/testing.

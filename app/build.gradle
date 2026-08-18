@@ -14,8 +14,8 @@ android {
         applicationId "com.tcgrestock.monitor"
         minSdk 26
         targetSdk 34
-        versionCode 6
-        versionName "0.06"
+        versionCode 7
+        versionName "0.07"
     }
 
     def releaseKeystore = System.getenv("ANDROID_KEYSTORE_FILE")
