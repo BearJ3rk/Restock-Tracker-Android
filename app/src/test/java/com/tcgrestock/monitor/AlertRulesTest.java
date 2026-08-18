@@ -6,6 +6,15 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 public class AlertRulesTest {
+    @Test public void productPriceOverridesGlobalPrice() {
+        assertTrue(AlertRules.effectiveMaximumPrice(40.00, false, 60.00) == 40.00);
+    }
+
+    @Test public void blankProductPriceUsesGlobalUnlessIgnored() {
+        assertTrue(AlertRules.effectiveMaximumPrice(null, false, 60.00) == 60.00);
+        assertTrue(AlertRules.effectiveMaximumPrice(null, true, 60.00) == null);
+    }
+
     @Test public void allowsAnyVerifiedOrUnknownPriceWhenNoRuleExists() {
         assertTrue(AlertRules.priceAllowed(null, null, false, null));
         assertTrue(AlertRules.priceAllowed(199.99, null, false, null));

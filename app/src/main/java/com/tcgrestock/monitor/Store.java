@@ -37,6 +37,9 @@ public final class Store {
             defaults.put("snooze_after_open_24h", true);
             defaults.put("monitor_enabled", false);
             defaults.put("dark_mode", true);
+            defaults.put("global_alert_max_price", "");
+            defaults.put("in_stock_confirmations_required", 2);
+            defaults.put("verify_marketplace_sellers", true);
             File f = new File(c.getFilesDir(), SETTINGS_FILE);
             if (!f.exists()) {
                 writeText(f, defaults.toString(2));
@@ -108,8 +111,15 @@ public final class Store {
             if (!p.has("paused")) p.put("paused", false);
             if (!p.has("check_interval")) p.put("check_interval", 30);
             if (!p.has("alert_max_price")) p.put("alert_max_price", "");
+            if (!p.has("ignore_global_alert_max_price")) p.put("ignore_global_alert_max_price", false);
             if (!p.has("alert_at_or_below_msrp")) p.put("alert_at_or_below_msrp", false);
             if (!p.has("ignore_third_party")) p.put("ignore_third_party", true);
+            if (!p.has("in_stock_confirmation_count")) {
+                p.put("in_stock_confirmation_count", p.optBoolean("last", false) ? 2 : 0);
+            }
+            if (!p.has("last_confirmed_in_stock")) {
+                p.put("last_confirmed_in_stock", p.optBoolean("last", false));
+            }
             if (!p.has("last_checked")) p.put("last_checked", 0);
             if (!p.has("last_in_stock")) p.put("last_in_stock", 0);
             if (!p.has("next_check")) p.put("next_check", 0);

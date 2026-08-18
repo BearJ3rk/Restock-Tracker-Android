@@ -37,8 +37,11 @@ public class MonitorService extends Service {
     private void checkCycle() {
         if (!running) return;
         JSONArray products = Store.loadProducts(this);
+        JSONObject settings = Store.loadSettings(this);
         long now = System.currentTimeMillis() / 1000L;
         ArrayList<JSONObject> alerts = new ArrayList<>();
+        int confirmationsRequired = Math.max(1, Math.min(5,
+                settings.optInt("in_stock_confirmations_required", 2)));
 
         for (int i=0;i<products.length();i++) {
             JSONObject p = products.optJSONObject(i);
@@ -52,46 +55,105 @@ public class MonitorService extends Service {
 
             String url = p.optString("url","");
             if (url.isEmpty()) continue;
-            Boolean old = p.has("last") && !p.isNull("last") ? p.optBoolean("last") : null;
+            boolean wasConfirmed = p.optBoolean("last_confirmed_in_stock", false);
             Detector.Result r = Detector.check(url);
 
             try {
                 p.put("last_checked", now);
                 if (!r.error.isEmpty()) {
                     p.put("status", "Check failed");
+                    if (!wasConfirmed) p.put("in_stock_confirmation_count", 0);
                     continue;
                 }
                 if (r.price != null) p.put("current_price", r.price);
                 if (!r.seller.isEmpty()) p.put("last_seller", r.seller);
 
-                if (Boolean.TRUE.equals(r.stock)) {
-                    p.put("last_in_stock", now);
-                    p.put("status", snoozed(p,now) ? "IN STOCK — silenced" : "IN STOCK — checked");
-                } else if (Boolean.FALSE.equals(r.stock)) {
-                    p.put("status", "Out of stock — checked");
+                int confirmationCount;
+                boolean confirmedInStock;
+                if (r.stock == null && wasConfirmed) {
+                    // Do not re-alert after a temporary inconclusive retailer response.
+                    confirmationCount = confirmationsRequired;
+                    confirmedInStock = true;
                 } else {
-                    p.put("status", "Unknown — checked, no alert");
+                    confirmationCount = StockConfirmation.nextCount(
+                            r.stock,
+                            p.optInt("in_stock_confirmation_count", 0),
+                            confirmationsRequired);
+                    confirmedInStock = StockConfirmation.isConfirmed(
+                            confirmationCount, confirmationsRequired);
                 }
+                p.put("in_stock_confirmation_count", confirmationCount);
+                p.put("last_confirmed_in_stock", confirmedInStock);
                 if (r.stock == null) p.put("last", JSONObject.NULL); else p.put("last", r.stock);
 
-                boolean transitioned = Boolean.TRUE.equals(r.stock) && !Boolean.TRUE.equals(old);
-                boolean priceDrop = Boolean.TRUE.equals(r.stock) && r.price != null
+                boolean currentlyInStock = Boolean.TRUE.equals(r.stock);
+                boolean transitioned = currentlyInStock && confirmedInStock && !wasConfirmed;
+                boolean priceDrop = currentlyInStock && confirmedInStock && r.price != null
                         && snoozed(p,now) && lowerThanAlertPrice(p);
-                boolean priceRulesAllow = alertRulesAllow(p, r.price);
+                boolean priceRulesAllow = alertRulesAllow(p, settings, r.price);
                 boolean hadRuleState = p.has("last_alert_rules_allow")
                         && !p.isNull("last_alert_rules_allow");
-                boolean becamePriceEligible = Boolean.TRUE.equals(r.stock)
+                boolean becamePriceEligible = currentlyInStock && confirmedInStock
                         && priceRulesAllow && hadRuleState
                         && !p.optBoolean("last_alert_rules_allow", false);
 
-                if (!hasPriceRule(p) || r.price != null) {
+                if (r.stock != null && (!hasPriceRule(p, settings) || r.price != null)) {
                     p.put("last_alert_rules_allow", priceRulesAllow);
                 } else if (transitioned) {
                     // Remember that an in-stock transition is waiting for a verified price.
                     p.put("last_alert_rules_allow", false);
                 }
 
-                if ((transitioned || priceDrop || becamePriceEligible) && priceRulesAllow) alerts.add(p);
+                boolean verifySeller = settings.optBoolean("verify_marketplace_sellers", true)
+                        && p.optBoolean("ignore_third_party", true);
+                boolean sellerAllowed = SellerRules.sellerAllowed(url, r.seller, verifySeller);
+                boolean hadSellerState = p.has("last_seller_rules_allow")
+                        && !p.isNull("last_seller_rules_allow");
+                boolean becameSellerEligible = currentlyInStock && confirmedInStock
+                        && sellerAllowed && hadSellerState
+                        && !p.optBoolean("last_seller_rules_allow", false);
+                boolean missingRequiredSeller = SellerRules.requiresVerification(url, verifySeller)
+                        && r.seller.isEmpty();
+                if (r.stock != null && !missingRequiredSeller) {
+                    p.put("last_seller_rules_allow", sellerAllowed);
+                } else if (transitioned) {
+                    p.put("last_seller_rules_allow", false);
+                }
+
+                if (Boolean.TRUE.equals(r.stock)) {
+                    p.put("last_in_stock", now);
+                    if (!confirmedInStock) {
+                        p.put("status", "IN STOCK — confirming " + confirmationCount
+                                + " of " + confirmationsRequired);
+                    } else if (!sellerAllowed) {
+                        p.put("status", "IN STOCK — seller not verified");
+                    } else if (!priceRulesAllow) {
+                        p.put("status", r.price == null
+                                ? "IN STOCK — waiting for verified price"
+                                : "IN STOCK — above price limit");
+                    } else {
+                        p.put("status", snoozed(p,now)
+                                ? "IN STOCK — silenced" : "IN STOCK — confirmed");
+                    }
+                } else if (Boolean.FALSE.equals(r.stock)) {
+                    p.put("status", "Out of stock — checked");
+                } else {
+                    p.put("status", "Unknown — checked, no alert");
+                }
+
+                if ((transitioned || priceDrop || becamePriceEligible || becameSellerEligible)
+                        && priceRulesAllow && sellerAllowed) {
+                    String reason;
+                    if (priceDrop) reason = "Lower price detected during silence";
+                    else if (becamePriceEligible) reason = "Price moved within the alert limit";
+                    else if (becameSellerEligible) reason = "Verified retailer seller detected";
+                    else reason = "Confirmed in stock on " + confirmationsRequired
+                            + " consecutive checks";
+                    p.put("last_alert_reason", reason);
+                    p.put("last_alert_seller", r.seller);
+                    p.put("last_alert_confirmation_count", confirmationCount);
+                    alerts.add(p);
+                }
                 recordHistory(p, r.stock);
             } catch (Exception ignored) {}
         }
@@ -115,8 +177,12 @@ public class MonitorService extends Service {
         } catch (Exception e) { return false; }
     }
 
-    private boolean alertRulesAllow(JSONObject p, Double freshlyDetectedPrice) {
-        Double maximumPrice = optionalDouble(p, "alert_max_price");
+    private boolean alertRulesAllow(
+            JSONObject p, JSONObject settings, Double freshlyDetectedPrice) {
+        Double maximumPrice = AlertRules.effectiveMaximumPrice(
+                optionalDouble(p, "alert_max_price"),
+                p.optBoolean("ignore_global_alert_max_price", false),
+                optionalDouble(settings, "global_alert_max_price"));
         Double msrp = optionalDouble(p, "msrp");
         return AlertRules.priceAllowed(
                 freshlyDetectedPrice,
@@ -125,8 +191,11 @@ public class MonitorService extends Service {
                 msrp);
     }
 
-    private boolean hasPriceRule(JSONObject p) {
-        return optionalDouble(p, "alert_max_price") != null
+    private boolean hasPriceRule(JSONObject p, JSONObject settings) {
+        return AlertRules.effectiveMaximumPrice(
+                optionalDouble(p, "alert_max_price"),
+                p.optBoolean("ignore_global_alert_max_price", false),
+                optionalDouble(settings, "global_alert_max_price")) != null
                 || p.optBoolean("alert_at_or_below_msrp", false);
     }
 
@@ -173,6 +242,11 @@ public class MonitorService extends Service {
                 row.put("url", p.optString("url",""));
                 row.put("status", p.optString("status","IN STOCK"));
                 if (p.has("current_price")) row.put("current_price", p.opt("current_price"));
+                if (!p.optString("last_alert_seller", "").isEmpty()) {
+                    row.put("seller", p.optString("last_alert_seller", ""));
+                }
+                row.put("reason", p.optString("last_alert_reason", "Restock rules matched"));
+                row.put("confirmation_count", p.optInt("last_alert_confirmation_count", 0));
                 row.put("triggered_at", now);
                 row.put("alert_state", "active");
                 existing.put(row);
