@@ -38,6 +38,7 @@ public final class Store {
             defaults.put("snooze_after_open_24h", true);
             defaults.put("monitor_enabled", false);
             defaults.put("dark_mode", true);
+            defaults.put("theme_mode", ThemeMode.SYSTEM);
             defaults.put("global_alert_max_price", "");
             defaults.put("in_stock_confirmations_required", 2);
             defaults.put("verify_marketplace_sellers", true);
@@ -51,6 +52,10 @@ public final class Store {
                 return defaults;
             }
             JSONObject saved = new JSONObject(readText(f));
+            if (!saved.has("theme_mode")) {
+                saved.put("theme_mode", saved.optBoolean("dark_mode", true)
+                        ? ThemeMode.DARK : ThemeMode.LIGHT);
+            }
             Iterator<String> keys = defaults.keys();
             while (keys.hasNext()) {
                 String k = keys.next();

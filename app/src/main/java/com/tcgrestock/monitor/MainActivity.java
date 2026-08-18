@@ -41,6 +41,7 @@ public class MainActivity extends Activity {
     private UpdateManager updateManager;
     private String currentPokemonName = "";
     private int currentPokemonId = 0;
+    private boolean darkTheme = true;
     private boolean bulkMode = false;
     private boolean updatingRetailerFilter = false;
     private final HashSet<String> selectedProductKeys = new HashSet<>();
@@ -50,8 +51,14 @@ public class MainActivity extends Activity {
     };
 
     @Override protected void onCreate(Bundle saved) {
-        super.onCreate(saved);
         settings = Store.loadSettings(this);
+        boolean systemDark = (getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+        darkTheme = ThemeMode.isDark(settings.optString("theme_mode", ThemeMode.SYSTEM), systemDark);
+        setTheme(darkTheme ? R.style.AppThemeDark : R.style.AppThemeLight);
+        super.onCreate(saved);
+        configureSystemBars();
         requestNotificationPermission();
         updateManager = new UpdateManager(this);
         buildUi();
@@ -89,7 +96,7 @@ public class MainActivity extends Activity {
 
         GradientDrawable screenBg = new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{Color.rgb(40,45,53), Color.rgb(24,29,35)}
+                new int[]{backgroundTopColor(), backgroundBottomColor()}
         );
         screen.setBackground(screenBg);
 
@@ -121,8 +128,8 @@ public class MainActivity extends Activity {
         nav.setOrientation(LinearLayout.HORIZONTAL);
         nav.setPadding(dp(4), dp(4), dp(4), dp(6));
         GradientDrawable navBg = new GradientDrawable();
-        navBg.setColor(Color.rgb(31,35,42));
-        navBg.setStroke(dp(1), Color.rgb(72,80,90));
+        navBg.setColor(navigationColor());
+        navBg.setStroke(dp(1), borderColor());
         nav.setBackground(navBg);
 
         Button productsTab = button("Products", v -> showPage("products"));
@@ -459,7 +466,7 @@ public class MainActivity extends Activity {
             if (bulkMode) {
                 CheckBox selected = new CheckBox(this);
                 selected.setText(p.optString("name", "Product"));
-                selected.setTextColor(Color.WHITE);
+                selected.setTextColor(textColor());
                 String key = productKey(p, idx);
                 selected.setChecked(selectedProductKeys.contains(key));
                 selected.setOnCheckedChangeListener((button, checked) -> {
@@ -1150,6 +1157,14 @@ public class MainActivity extends Activity {
     private void showSettings() {
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(18),dp(8),dp(18),0);
         ScrollView settingsScroll=new ScrollView(this);settingsScroll.addView(box);
+        box.addView(text("Appearance",13,true));
+        Spinner themeMode=new Spinner(this);
+        ArrayAdapter<String> themeAdapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,ThemeMode.LABELS);
+        themeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        themeMode.setAdapter(themeAdapter);
+        String originalTheme=settings.optString("theme_mode",ThemeMode.SYSTEM);
+        themeMode.setSelection(ThemeMode.optionIndex(originalTheme));
+        box.addView(themeMode);
         EditText poke=input("Random Pokémon refresh seconds",String.valueOf(settings.optInt("pokemon_refresh_seconds",60)));box.addView(poke);
         EditText globalMax=input("Default maximum alert price (optional)",settings.optString("global_alert_max_price",""));globalMax.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);box.addView(globalMax);
         EditText confirmations=input("Consecutive in-stock checks required (1-5)",String.valueOf(settings.optInt("in_stock_confirmations_required",2)));confirmations.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);box.addView(confirmations);
@@ -1187,8 +1202,13 @@ public class MainActivity extends Activity {
                 settings.put("quiet_hours_end",quietEndValue);
                 settings.put("notification_silence_minutes",
                         SilenceRules.MINUTE_OPTIONS[notificationSilence.getSelectedItemPosition()]);
-                Store.saveSettings(this,settings);schedulePokemon();
+                String selectedTheme=ThemeMode.valueAt(themeMode.getSelectedItemPosition());
+                settings.put("theme_mode",selectedTheme);
+                settings.put("dark_mode",ThemeMode.DARK.equals(selectedTheme));
+                Store.saveSettings(this,settings);
                 Toast.makeText(this,"Settings saved",Toast.LENGTH_SHORT).show();
+                if(!originalTheme.equals(selectedTheme))recreate();
+                else schedulePokemon();
             }catch(Exception e){Toast.makeText(this,"Check prices, confirmations, and HH:mm quiet times",Toast.LENGTH_SHORT).show();}
         }).setNegativeButton("Cancel",null).show();
     }
@@ -1475,12 +1495,12 @@ public class MainActivity extends Activity {
 
     private LinearLayout panel() {
         LinearLayout p=new LinearLayout(this);p.setOrientation(LinearLayout.VERTICAL);p.setPadding(dp(12),dp(10),dp(12),dp(10));
-        GradientDrawable g=new GradientDrawable();g.setColor(Color.rgb(43,45,49));g.setCornerRadius(dp(12));p.setBackground(g);
+        GradientDrawable g=new GradientDrawable();g.setColor(panelColor());g.setCornerRadius(dp(12));g.setStroke(dp(1),borderColor());p.setBackground(g);
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMargins(0,dp(6),0,dp(6));p.setLayoutParams(lp);return p;
     }
     private LinearLayout row(){LinearLayout r=new LinearLayout(this);r.setOrientation(LinearLayout.HORIZONTAL);return r;}
-    private TextView text(String s,int size,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(Color.WHITE);if(bold)t.setTypeface(null,1);t.setPadding(dp(4),dp(4),dp(4),dp(4));return t;}
+    private TextView text(String s,int size,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(textColor());if(bold)t.setTypeface(null,1);t.setPadding(dp(4),dp(4),dp(4),dp(4));return t;}
     private Button button(String s,View.OnClickListener l){
         Button b=new Button(this);
         b.setText(s);
@@ -1495,7 +1515,23 @@ public class MainActivity extends Activity {
     private int dp(int v){return (int)(v*getResources().getDisplayMetrics().density+.5f);}
     private String formatTime(long ts){if(ts<=0)return "—";return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US).format(new Date(ts*1000));}
     private String titleCase(String s){StringBuilder b=new StringBuilder();for(String x:s.split(" ")){if(x.length()>0)b.append(Character.toUpperCase(x.charAt(0))).append(x.substring(1)).append(" ");}return b.toString().trim();}
-    private void applyBackground(){GradientDrawable g=new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{Color.rgb(40,45,53),Color.rgb(24,29,35)});root.setBackground(g);}
+    private int textColor(){return darkTheme?Color.WHITE:Color.rgb(28,34,40);}
+    private int panelColor(){return darkTheme?Color.rgb(43,45,49):Color.rgb(255,255,255);}
+    private int backgroundTopColor(){return darkTheme?Color.rgb(40,45,53):Color.rgb(248,250,252);}
+    private int backgroundBottomColor(){return darkTheme?Color.rgb(24,29,35):Color.rgb(231,236,242);}
+    private int navigationColor(){return darkTheme?Color.rgb(31,35,42):Color.rgb(255,255,255);}
+    private int borderColor(){return darkTheme?Color.rgb(72,80,90):Color.rgb(196,205,214);}
+    private void applyBackground(){GradientDrawable g=new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{backgroundTopColor(),backgroundBottomColor()});root.setBackground(g);}
+
+    private void configureSystemBars() {
+        int chrome = darkTheme ? Color.rgb(32,37,44) : Color.rgb(238,242,246);
+        getWindow().setStatusBarColor(chrome);
+        getWindow().setNavigationBarColor(darkTheme ? chrome : Color.WHITE);
+        int flags = getWindow().getDecorView().getSystemUiVisibility();
+        int lightFlags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        flags = darkTheme ? (flags & ~lightFlags) : (flags | lightFlags);
+        getWindow().getDecorView().setSystemUiVisibility(flags);
+    }
 
     @Override protected void onResume() {
         super.onResume();
