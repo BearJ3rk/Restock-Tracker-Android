@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.*;
 import android.provider.Settings;
+import android.text.*;
 import android.view.*;
 import android.widget.*;
 import org.json.*;
@@ -27,12 +28,20 @@ public class MainActivity extends Activity {
     private TextView pokemonName, pokemonFact, monitorState, updateStatus;
     private ImageView pokemonImage;
     private Button learnMoreButton, startStopButton, updateButton;
+    private Button bulkToggleButton;
+    private EditText productSearch;
+    private Spinner productStatusFilter, productRetailerFilter;
+    private LinearLayout bulkActions;
+    private TextView bulkSelectionText, productCountText;
     private JSONArray products = new JSONArray();
     private JSONObject settings = new JSONObject();
     private final ScheduledExecutorService pokemonScheduler = Executors.newSingleThreadScheduledExecutor();
     private UpdateManager updateManager;
     private String currentPokemonName = "";
     private int currentPokemonId = 0;
+    private boolean bulkMode = false;
+    private boolean updatingRetailerFilter = false;
+    private final HashSet<String> selectedProductKeys = new HashSet<>();
 
     private final BroadcastReceiver dataReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) { runOnUiThread(MainActivity.this::reload); }
@@ -197,8 +206,70 @@ public class MainActivity extends Activity {
         monitorCard.addView(quick);
         productsPage.addView(monitorCard);
 
+        LinearLayout productHeading = row();
         TextView productHeader = text("Products", 18, true);
-        productsPage.addView(productHeader);
+        productCountText = text("", 12, false);
+        productCountText.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        bulkToggleButton = button("Select", v -> setBulkMode(!bulkMode));
+        productHeading.addView(productHeader, new LinearLayout.LayoutParams(0, dp(48), 1));
+        productHeading.addView(productCountText, new LinearLayout.LayoutParams(dp(64), dp(48)));
+        productHeading.addView(bulkToggleButton, new LinearLayout.LayoutParams(dp(90), dp(48)));
+        productsPage.addView(productHeading);
+
+        productSearch = input("Search products or retailers", "");
+        productSearch.setSingleLine(true);
+        productSearch.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                renderProducts();
+            }
+            @Override public void afterTextChanged(Editable s) {}
+        });
+        productsPage.addView(productSearch);
+
+        LinearLayout filterRow = row();
+        productStatusFilter = new Spinner(this);
+        ArrayAdapter<String> statusAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, ProductFilters.STATUS_OPTIONS);
+        statusAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        productStatusFilter.setAdapter(statusAdapter);
+        productRetailerFilter = new Spinner(this);
+        filterRow.addView(productStatusFilter, new LinearLayout.LayoutParams(0, dp(52), 1));
+        filterRow.addView(productRetailerFilter, new LinearLayout.LayoutParams(0, dp(52), 1));
+        productsPage.addView(filterRow);
+
+        AdapterView.OnItemSelectedListener filterListener = new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (!updatingRetailerFilter) renderProducts();
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        };
+        productStatusFilter.setOnItemSelectedListener(filterListener);
+        productRetailerFilter.setOnItemSelectedListener(filterListener);
+
+        bulkActions = panel();
+        bulkSelectionText = text("0 selected", 14, true);
+        bulkActions.addView(bulkSelectionText);
+        LinearLayout bulkRow1 = row();
+        bulkRow1.addView(button("Pause", v -> bulkSetPaused(true)),
+                new LinearLayout.LayoutParams(0, dp(48), 1));
+        bulkRow1.addView(button("Resume", v -> bulkSetPaused(false)),
+                new LinearLayout.LayoutParams(0, dp(48), 1));
+        bulkActions.addView(bulkRow1);
+        LinearLayout bulkRow2 = row();
+        bulkRow2.addView(button("Alerts On", v -> bulkSetAlerts(true)),
+                new LinearLayout.LayoutParams(0, dp(48), 1));
+        bulkRow2.addView(button("Alerts Off", v -> bulkSetAlerts(false)),
+                new LinearLayout.LayoutParams(0, dp(48), 1));
+        bulkActions.addView(bulkRow2);
+        LinearLayout bulkRow3 = row();
+        bulkRow3.addView(button("Set Price", v -> showBulkPriceDialog()),
+                new LinearLayout.LayoutParams(0, dp(48), 1));
+        bulkRow3.addView(button("Delete", v -> confirmBulkDelete()),
+                new LinearLayout.LayoutParams(0, dp(48), 1));
+        bulkActions.addView(bulkRow3);
+        bulkActions.setVisibility(View.GONE);
+        productsPage.addView(bulkActions);
 
         listBox = new LinearLayout(this);
         listBox.setOrientation(LinearLayout.VERTICAL);
@@ -320,6 +391,7 @@ public class MainActivity extends Activity {
         boolean enabled=settings.optBoolean("monitor_enabled",false);
         monitorState.setText(enabled ? "Monitoring active — foreground service" : "Monitoring stopped");
         startStopButton.setText(enabled ? "Stop" : "Start");
+        refreshRetailerFilter();
         renderProducts();
         renderInStockPage();
         renderTriggeredPage();
@@ -327,7 +399,13 @@ public class MainActivity extends Activity {
     }
 
     private void renderProducts() {
+        if (listBox == null) return;
         listBox.removeAllViews();
+
+        String query = productSearch == null ? "" : productSearch.getText().toString();
+        String statusFilter = selectedSpinnerValue(productStatusFilter, "All products");
+        String retailerFilter = selectedSpinnerValue(productRetailerFilter, "All retailers");
+        int visibleCount = 0;
 
         for(int i=0;i<products.length();i++) {
             JSONObject p=products.optJSONObject(i);
@@ -335,12 +413,41 @@ public class MainActivity extends Activity {
             Store.migrate(p);
             final int idx=i;
 
+            boolean hasPriceLimit = !p.optString("alert_max_price", "").isEmpty()
+                    || (!p.optBoolean("ignore_global_alert_max_price", false)
+                    && !settings.optString("global_alert_max_price", "").isEmpty())
+                    || p.optBoolean("alert_at_or_below_msrp", false);
+            if (!ProductFilters.matches(
+                    p.optString("name", ""),
+                    p.optString("url", ""),
+                    p.optString("status", ""),
+                    p.optBoolean("paused", false),
+                    p.optBoolean("alerts_enabled", true),
+                    hasPriceLimit,
+                    query,
+                    statusFilter,
+                    retailerFilter)) continue;
+            visibleCount++;
+
             LinearLayout card=panel();
 
             // Product name + status first, so the most important information is visible
             // without wasting horizontal space.
-            TextView name=text(p.optString("name","Product"),16,true);
-            card.addView(name);
+            if (bulkMode) {
+                CheckBox selected = new CheckBox(this);
+                selected.setText(p.optString("name", "Product"));
+                selected.setTextColor(Color.WHITE);
+                String key = productKey(p, idx);
+                selected.setChecked(selectedProductKeys.contains(key));
+                selected.setOnCheckedChangeListener((button, checked) -> {
+                    if (checked) selectedProductKeys.add(key); else selectedProductKeys.remove(key);
+                    updateBulkActions();
+                });
+                card.addView(selected);
+            } else {
+                TextView name=text(p.optString("name","Product"),16,true);
+                card.addView(name);
+            }
 
             String price = p.has("current_price") && !p.optString("current_price","").isEmpty()
                     ? String.format(Locale.US,"$%.2f",p.optDouble("current_price")) : "—";
@@ -351,10 +458,17 @@ public class MainActivity extends Activity {
             String compact =
                     status +
                     "\nPrice: " + price + "   MSRP: " + msrp +
-                    "\nChecked: " + formatTime(p.optLong("last_checked",0));
+                    "\nRetailer: " + ProductFilters.retailer(p.optString("url", ""))
+                    + "   Alerts: " + (p.optBoolean("alerts_enabled", true) ? "on" : "off")
+                    + "\nChecked: " + formatTime(p.optLong("last_checked",0));
 
             TextView info=text(compact,13,false);
             card.addView(info);
+
+            if (bulkMode) {
+                listBox.addView(card);
+                continue;
+            }
 
             // Two rows of larger buttons are easier to use on narrow screens
             // than four tiny buttons squeezed onto one line.
@@ -379,6 +493,164 @@ public class MainActivity extends Activity {
             card.setOnLongClickListener(v->{ confirmDelete(idx); return true; });
             listBox.addView(card);
         }
+
+        if (productCountText != null) productCountText.setText(visibleCount + "/" + products.length());
+        if (visibleCount == 0) {
+            listBox.addView(text("No products match the current search and filters.", 14, false));
+        }
+        updateBulkActions();
+    }
+
+    private String selectedSpinnerValue(Spinner spinner, String fallback) {
+        return spinner == null || spinner.getSelectedItem() == null
+                ? fallback : String.valueOf(spinner.getSelectedItem());
+    }
+
+    private void refreshRetailerFilter() {
+        if (productRetailerFilter == null) return;
+        String previous = selectedSpinnerValue(productRetailerFilter, "All retailers");
+        TreeSet<String> retailers = new TreeSet<>();
+        for (int i = 0; i < products.length(); i++) {
+            JSONObject p = products.optJSONObject(i);
+            if (p != null) retailers.add(ProductFilters.retailer(p.optString("url", "")));
+        }
+        ArrayList<String> options = new ArrayList<>();
+        options.add("All retailers");
+        options.addAll(retailers);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, options);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        updatingRetailerFilter = true;
+        productRetailerFilter.setAdapter(adapter);
+        int selected = options.indexOf(previous);
+        productRetailerFilter.setSelection(selected >= 0 ? selected : 0);
+        updatingRetailerFilter = false;
+    }
+
+    private String productKey(JSONObject product, int index) {
+        String url = product.optString("url", "");
+        return url.isEmpty() ? product.optString("name", "Product") + "#" + index : url;
+    }
+
+    private ArrayList<JSONObject> selectedProducts() {
+        ArrayList<JSONObject> selected = new ArrayList<>();
+        for (int i = 0; i < products.length(); i++) {
+            JSONObject product = products.optJSONObject(i);
+            if (product != null && selectedProductKeys.contains(productKey(product, i))) {
+                selected.add(product);
+            }
+        }
+        return selected;
+    }
+
+    private void setBulkMode(boolean enabled) {
+        bulkMode = enabled;
+        if (!enabled) selectedProductKeys.clear();
+        if (bulkToggleButton != null) bulkToggleButton.setText(enabled ? "Done" : "Select");
+        renderProducts();
+    }
+
+    private void updateBulkActions() {
+        if (bulkActions == null) return;
+        bulkActions.setVisibility(bulkMode ? View.VISIBLE : View.GONE);
+        if (bulkSelectionText != null) {
+            bulkSelectionText.setText(selectedProductKeys.size() + " selected");
+        }
+    }
+
+    private void bulkSetPaused(boolean paused) {
+        ArrayList<JSONObject> selected = selectedProducts();
+        if (selected.isEmpty()) {
+            Toast.makeText(this, "Select at least one product", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        for (JSONObject product : selected) {
+            try {
+                product.put("paused", paused);
+                product.put("status", paused ? "Paused" : "Waiting...");
+            } catch (Exception ignored) {}
+        }
+        Store.saveProducts(this, products);
+        reload();
+    }
+
+    private void bulkSetAlerts(boolean enabled) {
+        ArrayList<JSONObject> selected = selectedProducts();
+        if (selected.isEmpty()) {
+            Toast.makeText(this, "Select at least one product", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        for (JSONObject product : selected) {
+            try {
+                boolean wasEnabled = product.optBoolean("alerts_enabled", true);
+                product.put("alerts_enabled", enabled);
+                if (enabled && !wasEnabled) {
+                    product.put("last_confirmed_in_stock", false);
+                    product.put("in_stock_confirmation_count", 0);
+                }
+            } catch (Exception ignored) {}
+        }
+        Store.saveProducts(this, products);
+        reload();
+    }
+
+    private void showBulkPriceDialog() {
+        if (selectedProducts().isEmpty()) {
+            Toast.makeText(this, "Select at least one product", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        EditText price = input("Maximum alert price; blank uses global", "");
+        price.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
+                | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        new AlertDialog.Builder(this)
+                .setTitle("Set Alert Price")
+                .setView(price)
+                .setPositiveButton("Apply", (dialog, which) -> {
+                    try {
+                        String raw = price.getText().toString().trim().replace("$", "");
+                        Object value = raw.isEmpty() ? "" : Double.parseDouble(raw);
+                        if (value instanceof Double && (Double)value <= 0) {
+                            throw new IllegalArgumentException("Price must be positive");
+                        }
+                        for (JSONObject product : selectedProducts()) {
+                            product.put("alert_max_price", value);
+                            product.put("ignore_global_alert_max_price", false);
+                            product.remove("last_alert_rules_allow");
+                        }
+                        Store.saveProducts(this, products);
+                        reload();
+                    } catch (Exception e) {
+                        Toast.makeText(this, "Enter a valid price", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void confirmBulkDelete() {
+        int count = selectedProducts().size();
+        if (count == 0) {
+            Toast.makeText(this, "Select at least one product", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Delete products")
+                .setMessage("Delete " + count + " selected product(s)?")
+                .setPositiveButton("Delete", (dialog, which) -> {
+                    JSONArray kept = new JSONArray();
+                    for (int i = 0; i < products.length(); i++) {
+                        JSONObject product = products.optJSONObject(i);
+                        if (product != null && !selectedProductKeys.contains(productKey(product, i))) {
+                            kept.put(product);
+                        }
+                    }
+                    products = kept;
+                    selectedProductKeys.clear();
+                    Store.saveProducts(this, products);
+                    reload();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void renderInStockPage() {
@@ -805,6 +1077,7 @@ public class MainActivity extends Activity {
         CheckBox ignoreGlobal=new CheckBox(this);ignoreGlobal.setText("No maximum price for this product");ignoreGlobal.setChecked(p.optBoolean("ignore_global_alert_max_price",false));box.addView(ignoreGlobal);
         CheckBox atMsrp=new CheckBox(this);atMsrp.setText("Alert only at/below MSRP");atMsrp.setChecked(p.optBoolean("alert_at_or_below_msrp",false));box.addView(atMsrp);
         CheckBox verifySeller=new CheckBox(this);verifySeller.setText("Block third-party marketplace sellers");verifySeller.setChecked(p.optBoolean("ignore_third_party",true));box.addView(verifySeller);
+        CheckBox alertsEnabled=new CheckBox(this);alertsEnabled.setText("Restock alerts enabled");alertsEnabled.setChecked(p.optBoolean("alerts_enabled",true));box.addView(alertsEnabled);
 
         new AlertDialog.Builder(this).setTitle(idx>=0?"Edit Product":"Add Product").setView(formScroll)
                 .setPositiveButton("Save",(d,w)->{
@@ -819,6 +1092,12 @@ public class MainActivity extends Activity {
                                 maxPrice.getText().toString().trim().isEmpty() && ignoreGlobal.isChecked());
                         obj.put("alert_at_or_below_msrp",atMsrp.isChecked());
                         obj.put("ignore_third_party",verifySeller.isChecked());
+                        boolean wasAlertsEnabled=obj.optBoolean("alerts_enabled",true);
+                        obj.put("alerts_enabled",alertsEnabled.isChecked());
+                        if(alertsEnabled.isChecked() && !wasAlertsEnabled){
+                            obj.put("last_confirmed_in_stock",false);
+                            obj.put("in_stock_confirmation_count",0);
+                        }
                         obj.remove("last_alert_rules_allow");
                         obj.remove("last_seller_rules_allow");
                         Store.migrate(obj);

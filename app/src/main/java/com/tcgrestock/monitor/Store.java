@@ -114,6 +114,7 @@ public final class Store {
             if (!p.has("silence_mode")) p.put("silence_mode", "");
             if (!p.has("last_alert_price")) p.put("last_alert_price", "");
             if (!p.has("paused")) p.put("paused", false);
+            if (!p.has("alerts_enabled")) p.put("alerts_enabled", true);
             if (!p.has("check_interval")) p.put("check_interval", 30);
             if (!p.has("alert_max_price")) p.put("alert_max_price", "");
             if (!p.has("ignore_global_alert_max_price")) p.put("ignore_global_alert_max_price", false);
