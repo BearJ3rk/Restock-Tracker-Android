@@ -1,5 +1,5 @@
 @echo off
-echo TCG Restock Monitor MV0.01 Android
+echo TCG Restock Monitor MV0.05 Android
 echo.
 echo Easiest method:
 echo 1. Install Android Studio.

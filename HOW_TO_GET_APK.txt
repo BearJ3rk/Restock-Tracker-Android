@@ -1,4 +1,4 @@
-TCG Restock Monitor MV0.01
+TCG Restock Monitor MV0.05
 
 This ZIP contains the Android source project, not a compiled APK.
 
