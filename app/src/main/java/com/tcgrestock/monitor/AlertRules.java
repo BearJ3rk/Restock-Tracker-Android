@@ -3,6 +3,15 @@ package com.tcgrestock.monitor;
 final class AlertRules {
     private AlertRules() {}
 
+    static Double effectiveMaximumPrice(
+            Double productMaximumPrice,
+            boolean ignoreGlobalMaximum,
+            Double globalMaximumPrice) {
+        if (productMaximumPrice != null) return productMaximumPrice;
+        if (ignoreGlobalMaximum) return null;
+        return globalMaximumPrice;
+    }
+
     static boolean priceAllowed(
             Double currentPrice,
             Double maximumPrice,

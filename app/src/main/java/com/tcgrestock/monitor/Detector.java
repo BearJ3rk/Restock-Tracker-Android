@@ -119,7 +119,8 @@ public final class Detector {
                 "\"sellerName\"\\s*:\\s*\"([^\"]+)\"",
                 "\"seller_name\"\\s*:\\s*\"([^\"]+)\"",
                 "\"sellerDisplayName\"\\s*:\\s*\"([^\"]+)\"",
-                "\"merchantName\"\\s*:\\s*\"([^\"]+)\""
+                "\"merchantName\"\\s*:\\s*\"([^\"]+)\"",
+                "\"seller\"\\s*:\\s*\\{[\\s\\S]{0,500}?\"name\"\\s*:\\s*\"([^\"]+)\""
         };
         for (String p : patterns) {
             Matcher m = Pattern.compile(p, Pattern.CASE_INSENSITIVE).matcher(html);

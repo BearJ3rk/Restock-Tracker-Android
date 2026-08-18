@@ -521,6 +521,10 @@ public class MainActivity extends Activity {
         String details = "Triggered: " + formatTime(alert.optLong("triggered_at", 0))
                 + "\nPrice: " + price
                 + "   Alert price: " + alertPriceLabel(p);
+        String seller = alert.optString("seller", p.optString("last_seller", ""));
+        if (!seller.isEmpty()) details += "\nSeller: " + seller;
+        String reason = alert.optString("reason", "");
+        if (!reason.isEmpty()) details += "\nWhy: " + reason;
         if (silenced) {
             details += "\nSilenced: " + formatTime(alert.optLong("silenced_at", 0));
         } else {
@@ -581,13 +585,18 @@ public class MainActivity extends Activity {
     }
 
     private String alertPriceLabel(JSONObject p) {
+        String label = "Any price";
         if (p != null && p.has("alert_max_price") && !p.optString("alert_max_price", "").isEmpty()) {
-            String label = String.format(Locale.US, "$%.2f max", p.optDouble("alert_max_price"));
-            if (p.optBoolean("alert_at_or_below_msrp", false)) label += " + MSRP";
-            return label;
+            label = String.format(Locale.US, "$%.2f max", p.optDouble("alert_max_price"));
+        } else if (p != null && !p.optBoolean("ignore_global_alert_max_price", false)
+                && !settings.optString("global_alert_max_price", "").isEmpty()) {
+            label = String.format(Locale.US, "$%.2f global max",
+                    settings.optDouble("global_alert_max_price"));
         }
-        if (p != null && p.optBoolean("alert_at_or_below_msrp", false)) return "MSRP or less";
-        return "Any price";
+        if (p != null && p.optBoolean("alert_at_or_below_msrp", false)) {
+            return "Any price".equals(label) ? "MSRP or less" : label + " + MSRP";
+        }
+        return label;
     }
 
     private void showAlertPriceDialog(JSONObject product) {
@@ -600,12 +609,18 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(18), dp(8), dp(18), 0);
         box.addView(text(
-                "Only notify when a freshly detected price is at or below your limit.",
+                "Only notify when a freshly detected price is at or below your limit. "
+                        + "Leave blank to use the global limit ("
+                        + globalAlertPriceLabel() + ").",
                 13, false));
         EditText maxPrice = input("Maximum alert price", product.optString("alert_max_price", ""));
         maxPrice.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
                 | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
         box.addView(maxPrice);
+        CheckBox ignoreGlobal = new CheckBox(this);
+        ignoreGlobal.setText("No maximum price for this product");
+        ignoreGlobal.setChecked(product.optBoolean("ignore_global_alert_max_price", false));
+        box.addView(ignoreGlobal);
         CheckBox atMsrp = new CheckBox(this);
         atMsrp.setText("Also require price at or below MSRP");
         atMsrp.setChecked(product.optBoolean("alert_at_or_below_msrp", false));
@@ -623,6 +638,8 @@ public class MainActivity extends Activity {
                             if (value <= 0) throw new IllegalArgumentException("Price must be positive");
                             product.put("alert_max_price", value);
                         }
+                        product.put("ignore_global_alert_max_price",
+                                raw.isEmpty() && ignoreGlobal.isChecked());
                         product.put("alert_at_or_below_msrp", atMsrp.isChecked());
                         product.remove("last_alert_rules_allow");
                         Store.saveProducts(this, products);
@@ -632,18 +649,23 @@ public class MainActivity extends Activity {
                         Toast.makeText(this, "Enter a valid price", Toast.LENGTH_SHORT).show();
                     }
                 })
-                .setNeutralButton("No Limit", (d, w) -> {
+                .setNeutralButton("Use Global", (d, w) -> {
                     try {
                         product.put("alert_max_price", "");
-                        product.put("alert_at_or_below_msrp", false);
+                        product.put("ignore_global_alert_max_price", false);
                         product.remove("last_alert_rules_allow");
                         Store.saveProducts(this, products);
                         renderTriggeredPage();
-                        Toast.makeText(this, "Price limit removed", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(this, "Using global price limit", Toast.LENGTH_SHORT).show();
                     } catch (Exception ignored) {}
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    private String globalAlertPriceLabel() {
+        if (settings.optString("global_alert_max_price", "").isEmpty()) return "not set";
+        return String.format(Locale.US, "$%.2f", settings.optDouble("global_alert_max_price"));
     }
 
     private JSONObject findProductByUrl(String url) {
@@ -751,14 +773,18 @@ public class MainActivity extends Activity {
     private void editProduct(int idx) {
         JSONObject p=idx>=0?products.optJSONObject(idx):new JSONObject();
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(18),dp(8),dp(18),0);
+        ScrollView formScroll=new ScrollView(this);formScroll.addView(box);
         EditText name=input("Product name",p.optString("name",""));box.addView(name);
         EditText url=input("Product URL",p.optString("url",""));box.addView(url);
         EditText msrp=input("MSRP",p.optString("msrp",""));box.addView(msrp);
         EditText interval=input("Check interval seconds",String.valueOf(p.optInt("check_interval",30)));box.addView(interval);
-        EditText maxPrice=input("Max alert price (optional)",p.optString("alert_max_price",""));box.addView(maxPrice);
+        EditText maxPrice=input("Max alert price (blank uses global)",p.optString("alert_max_price",""));box.addView(maxPrice);
+        maxPrice.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        CheckBox ignoreGlobal=new CheckBox(this);ignoreGlobal.setText("No maximum price for this product");ignoreGlobal.setChecked(p.optBoolean("ignore_global_alert_max_price",false));box.addView(ignoreGlobal);
         CheckBox atMsrp=new CheckBox(this);atMsrp.setText("Alert only at/below MSRP");atMsrp.setChecked(p.optBoolean("alert_at_or_below_msrp",false));box.addView(atMsrp);
+        CheckBox verifySeller=new CheckBox(this);verifySeller.setText("Block third-party marketplace sellers");verifySeller.setChecked(p.optBoolean("ignore_third_party",true));box.addView(verifySeller);
 
-        new AlertDialog.Builder(this).setTitle(idx>=0?"Edit Product":"Add Product").setView(box)
+        new AlertDialog.Builder(this).setTitle(idx>=0?"Edit Product":"Add Product").setView(formScroll)
                 .setPositiveButton("Save",(d,w)->{
                     try{
                         JSONObject obj=idx>=0?products.getJSONObject(idx):new JSONObject();
@@ -767,7 +793,12 @@ public class MainActivity extends Activity {
                         obj.put("msrp",parseMaybe(msrp.getText().toString()));
                         obj.put("check_interval",Math.max(15,Integer.parseInt(interval.getText().toString().trim())));
                         obj.put("alert_max_price",parseMaybe(maxPrice.getText().toString()));
+                        obj.put("ignore_global_alert_max_price",
+                                maxPrice.getText().toString().trim().isEmpty() && ignoreGlobal.isChecked());
                         obj.put("alert_at_or_below_msrp",atMsrp.isChecked());
+                        obj.put("ignore_third_party",verifySeller.isChecked());
+                        obj.remove("last_alert_rules_allow");
+                        obj.remove("last_seller_rules_allow");
                         Store.migrate(obj);
                         if(idx<0)products.put(obj);
                         Store.saveProducts(this,products);reload();
@@ -794,14 +825,28 @@ public class MainActivity extends Activity {
 
     private void showSettings() {
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(18),dp(8),dp(18),0);
+        ScrollView settingsScroll=new ScrollView(this);settingsScroll.addView(box);
         EditText poke=input("Random Pokémon refresh seconds",String.valueOf(settings.optInt("pokemon_refresh_seconds",60)));box.addView(poke);
+        EditText globalMax=input("Default maximum alert price (optional)",settings.optString("global_alert_max_price",""));globalMax.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);box.addView(globalMax);
+        EditText confirmations=input("Consecutive in-stock checks required (1-5)",String.valueOf(settings.optInt("in_stock_confirmations_required",2)));confirmations.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);box.addView(confirmations);
+        CheckBox sellers=new CheckBox(this);sellers.setText("Verify sellers on marketplace listings");sellers.setChecked(settings.optBoolean("verify_marketplace_sellers",true));box.addView(sellers);
         CheckBox snooze=new CheckBox(this);snooze.setText("Silence opened in-stock items for 24 hours");snooze.setChecked(settings.optBoolean("snooze_after_open_24h",true));box.addView(snooze);
-        new AlertDialog.Builder(this).setTitle("Settings").setView(box).setPositiveButton("Save",(d,w)->{
+        new AlertDialog.Builder(this).setTitle("Settings").setView(settingsScroll).setPositiveButton("Save",(d,w)->{
             try{
                 settings.put("pokemon_refresh_seconds",Math.max(30,Integer.parseInt(poke.getText().toString().trim())));
+                String globalRaw=globalMax.getText().toString().trim().replace("$","");
+                if(globalRaw.isEmpty())settings.put("global_alert_max_price","");
+                else{
+                    double value=Double.parseDouble(globalRaw);
+                    if(value<=0)throw new IllegalArgumentException("Price must be positive");
+                    settings.put("global_alert_max_price",value);
+                }
+                settings.put("in_stock_confirmations_required",Math.max(1,Math.min(5,Integer.parseInt(confirmations.getText().toString().trim()))));
+                settings.put("verify_marketplace_sellers",sellers.isChecked());
                 settings.put("snooze_after_open_24h",snooze.isChecked());
                 Store.saveSettings(this,settings);schedulePokemon();
-            }catch(Exception ignored){}
+                Toast.makeText(this,"Settings saved",Toast.LENGTH_SHORT).show();
+            }catch(Exception e){Toast.makeText(this,"Check the price and confirmation values",Toast.LENGTH_SHORT).show();}
         }).setNegativeButton("Cancel",null).show();
     }
 
