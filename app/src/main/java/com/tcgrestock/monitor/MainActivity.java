@@ -20,8 +20,10 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
+    private static final int REQUEST_EXPORT_BACKUP = 611;
+    private static final int REQUEST_IMPORT_BACKUP = 612;
     private LinearLayout root, listBox;
-    private LinearLayout screen, contentHost, productsPage, inStockPage, triggeredPage, activityPage, settingsPage;
+    private LinearLayout screen, contentHost, productsPage, inStockPage, triggeredPage, activityPage, settingsPage, healthPage;
     private JSONArray triggeredItems = new JSONArray();
     private boolean silencedAlertsExpanded = false;
     private TextView activityText;
@@ -112,6 +114,7 @@ public class MainActivity extends Activity {
         buildTriggeredPage();
         buildActivityPage();
         buildSettingsPage();
+        buildHealthPage();
 
         // Bottom navigation stays reachable by thumb.
         LinearLayout nav = new LinearLayout(this);
@@ -337,13 +340,19 @@ public class MainActivity extends Activity {
         LinearLayout card = panel();
         Button settingsButton = button("App Settings", v -> showSettings());
         Button dataButton = button("App Data Location", v -> showDataPath());
-        Button backupButton = button("Refresh Product View", v -> reload());
+        Button healthButton = button("Monitoring Health", v -> showPage("health"));
+        Button exportButton = button("Export Backup", v -> exportBackup());
+        Button importButton = button("Import Backup", v -> importBackup());
         updateButton = button("Check for App Updates", v -> checkForUpdates(true));
         card.addView(settingsButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
         card.addView(dataButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
-        card.addView(backupButton, new LinearLayout.LayoutParams(
+        card.addView(healthButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        card.addView(exportButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        card.addView(importButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
         card.addView(updateButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
@@ -360,6 +369,18 @@ public class MainActivity extends Activity {
 
         scroll.addView(settingsPage);
         scroll.setTag("settings_page");
+        contentHost.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void buildHealthPage() {
+        ScrollView scroll = new ScrollView(this);
+        healthPage = new LinearLayout(this);
+        healthPage.setOrientation(LinearLayout.VERTICAL);
+        healthPage.setPadding(dp(10), dp(6), dp(10), dp(10));
+        scroll.addView(healthPage);
+        scroll.setTag("health_page");
         contentHost.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
@@ -383,6 +404,7 @@ public class MainActivity extends Activity {
         if ("stock".equals(page)) renderInStockPage();
         if ("triggered".equals(page)) renderTriggeredPage();
         if ("activity".equals(page)) renderActivityPage();
+        if ("health".equals(page)) renderHealthPage();
     }
 
     private void reload() {
@@ -396,6 +418,7 @@ public class MainActivity extends Activity {
         renderInStockPage();
         renderTriggeredPage();
         renderActivityPage();
+        if (healthPage != null && healthPage.getParent() != null) renderHealthPage();
     }
 
     private void renderProducts() {
@@ -1172,8 +1195,183 @@ public class MainActivity extends Activity {
 
     private void showDataPath() {
         new AlertDialog.Builder(this).setTitle("App data location")
-                .setMessage(getFilesDir().getAbsolutePath()+"\n\nAndroid keeps this private to the app. Use Android backup/export later to move it.")
+                .setMessage(getFilesDir().getAbsolutePath()+"\n\nAndroid keeps this private to the app. Use Export Backup to save a portable copy.")
                 .setPositiveButton("OK",null).show();
+    }
+
+    private void renderHealthPage() {
+        if (healthPage == null) return;
+        healthPage.removeAllViews();
+
+        LinearLayout heading = row();
+        heading.addView(text("Monitoring Health", 18, true),
+                new LinearLayout.LayoutParams(0, dp(50), 1));
+        heading.addView(button("Settings", v -> showPage("settings")),
+                new LinearLayout.LayoutParams(dp(100), dp(50)));
+        healthPage.addView(heading);
+
+        JSONObject health = Store.loadHealth(this);
+        PowerManager power = (PowerManager)getSystemService(POWER_SERVICE);
+        boolean batteryExcluded = power != null
+                && power.isIgnoringBatteryOptimizations(getPackageName());
+        boolean configured = settings.optBoolean("monitor_enabled", false);
+
+        LinearLayout summary = panel();
+        String summaryText = "Monitor setting: " + (configured ? "On" : "Off")
+                + "\nService report: " + (health.optBoolean("service_running", false) ? "Running" : "Stopped")
+                + "\nBattery optimization: " + (batteryExcluded
+                ? "Excluded — background monitoring has fewer restrictions"
+                : "May restrict monitoring")
+                + "\nLast cycle: " + formatTime(health.optLong("last_cycle_completed", 0))
+                + "\nCycle results: " + health.optInt("successful_checks", 0) + " successful, "
+                + health.optInt("failed_checks", 0) + " failed"
+                + "\nCycle duration: " + health.optLong("last_cycle_duration_ms", 0) + " ms";
+        summary.addView(text(summaryText, 13, false));
+        LinearLayout summaryActions = row();
+        summaryActions.addView(button("Check Now", v -> checkNow()),
+                new LinearLayout.LayoutParams(0, dp(50), 1));
+        summaryActions.addView(button("Battery Settings", v -> openBatterySettings()),
+                new LinearLayout.LayoutParams(0, dp(50), 1));
+        summary.addView(summaryActions);
+        healthPage.addView(summary);
+
+        healthPage.addView(text("Product Checks", 16, true));
+        if (products.length() == 0) {
+            healthPage.addView(text("No products configured.", 14, false));
+            return;
+        }
+        for (int i = 0; i < products.length(); i++) {
+            JSONObject product = products.optJSONObject(i);
+            if (product == null) continue;
+            Store.migrate(product);
+            LinearLayout card = panel();
+            card.addView(text(product.optString("name", "Product"), 15, true));
+            String error = product.optString("last_check_error", "");
+            if (error.length() > 180) error = error.substring(0, 180) + "…";
+            String detail = "Last success: " + formatTime(product.optLong("last_successful_check", 0))
+                    + "\nLast attempted: " + formatTime(product.optLong("last_checked", 0))
+                    + "\nDuration: " + product.optLong("last_check_duration_ms", 0) + " ms"
+                    + "\nConsecutive failures: " + product.optInt("consecutive_failures", 0);
+            if (!error.isEmpty()) detail += "\nLatest error: " + error;
+            card.addView(text(detail, 13, false));
+            healthPage.addView(card);
+        }
+    }
+
+    private void openBatterySettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+        } catch (Exception e) {
+            startActivity(new Intent(Settings.ACTION_SETTINGS));
+        }
+    }
+
+    private void exportBackup() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, "TCG-Restock-Monitor-MV"
+                + BuildConfig.VERSION_NAME + "-backup.json");
+        startActivityForResult(intent, REQUEST_EXPORT_BACKUP);
+    }
+
+    private void importBackup() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        startActivityForResult(intent, REQUEST_IMPORT_BACKUP);
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        if (requestCode == REQUEST_EXPORT_BACKUP) writeBackup(uri);
+        if (requestCode == REQUEST_IMPORT_BACKUP) readBackup(uri);
+    }
+
+    private void writeBackup(Uri uri) {
+        try {
+            loadTriggeredItems();
+            JSONObject backup = BackupData.create(
+                    BuildConfig.VERSION_NAME,
+                    System.currentTimeMillis() / 1000L,
+                    products,
+                    settings,
+                    Store.loadHistory(this),
+                    triggeredItems,
+                    Store.loadHealth(this));
+            OutputStream out = getContentResolver().openOutputStream(uri, "w");
+            if (out == null) throw new IOException("Could not open backup destination");
+            out.write(backup.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            out.close();
+            Toast.makeText(this, "Backup exported", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            new AlertDialog.Builder(this).setTitle("Backup failed")
+                    .setMessage(e.getMessage()).setPositiveButton("OK", null).show();
+        }
+    }
+
+    private void readBackup(Uri uri) {
+        try {
+            InputStream in = getContentResolver().openInputStream(uri);
+            if (in == null) throw new IOException("Could not open backup file");
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = in.read(buffer)) > 0) {
+                out.write(buffer, 0, count);
+                if (out.size() > 10 * 1024 * 1024) throw new IOException("Backup is larger than 10 MB");
+            }
+            in.close();
+            JSONObject backup = new JSONObject(out.toString(java.nio.charset.StandardCharsets.UTF_8.name()));
+            BackupData.validate(backup);
+            int productCount = backup.getJSONArray("products").length();
+            int alertCount = backup.getJSONArray("triggered_alerts").length();
+            new AlertDialog.Builder(this)
+                    .setTitle("Import backup?")
+                    .setMessage("This replaces current products, settings, history, and alerts.\n\n"
+                            + productCount + " products\n" + alertCount + " saved alerts")
+                    .setPositiveButton("Import", (dialog, which) -> applyBackup(backup))
+                    .setNegativeButton("Cancel", null)
+                    .show();
+        } catch (Exception e) {
+            new AlertDialog.Builder(this).setTitle("Invalid backup")
+                    .setMessage(e.getMessage()).setPositiveButton("OK", null).show();
+        }
+    }
+
+    private void applyBackup(JSONObject backup) {
+        try {
+            stopService(new Intent(this, MonitorService.class).setAction(MonitorService.ACTION_STOP));
+            JSONArray importedProducts = new JSONArray(backup.getJSONArray("products").toString());
+            for (int i = 0; i < importedProducts.length(); i++) {
+                JSONObject product = importedProducts.optJSONObject(i);
+                if (product != null) Store.migrate(product);
+            }
+            JSONObject importedSettings = new JSONObject(backup.getJSONObject("settings").toString());
+            importedSettings.put("monitor_enabled", false);
+            JSONObject importedHealth = new JSONObject(backup.getJSONObject("monitoring_health").toString());
+            importedHealth.put("service_running", false);
+
+            Store.saveProducts(this, importedProducts);
+            Store.saveSettings(this, importedSettings);
+            Store.saveHistory(this, new JSONObject(backup.getJSONObject("price_history").toString()));
+            Store.saveHealth(this, importedHealth);
+            getSharedPreferences("alerts", MODE_PRIVATE).edit()
+                    .putString("triggered_items", backup.getJSONArray("triggered_alerts").toString())
+                    .remove("pending_quiet_items")
+                    .apply();
+            selectedProductKeys.clear();
+            bulkMode = false;
+            if (bulkToggleButton != null) bulkToggleButton.setText("Select");
+            reload();
+            showPage("products");
+            Toast.makeText(this, "Backup imported — monitoring is paused", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            new AlertDialog.Builder(this).setTitle("Import failed")
+                    .setMessage(e.getMessage()).setPositiveButton("OK", null).show();
+        }
     }
 
     private void checkForUpdates(boolean userInitiated) {

@@ -11,6 +11,7 @@ public final class Store {
     public static final String PRODUCTS_FILE = "products.json";
     public static final String SETTINGS_FILE = "settings.json";
     public static final String HISTORY_FILE = "price_history.json";
+    public static final String HEALTH_FILE = "monitoring_health.json";
 
     public static JSONArray loadProducts(Context c) {
         try {
@@ -79,6 +80,19 @@ public final class Store {
         catch (Exception ignored) {}
     }
 
+    public static JSONObject loadHealth(Context c) {
+        try {
+            File f = new File(c.getFilesDir(), HEALTH_FILE);
+            if (!f.exists()) return new JSONObject();
+            return new JSONObject(readText(f));
+        } catch (Exception e) { return new JSONObject(); }
+    }
+
+    public static synchronized void saveHealth(Context c, JSONObject health) {
+        try { writeText(new File(c.getFilesDir(), HEALTH_FILE), health.toString(2)); }
+        catch (Exception ignored) {}
+    }
+
     public static String readAsset(Context c, String name) throws Exception {
         InputStream in = c.getAssets().open(name);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -127,6 +141,11 @@ public final class Store {
                 p.put("last_confirmed_in_stock", p.optBoolean("last", false));
             }
             if (!p.has("last_checked")) p.put("last_checked", 0);
+            if (!p.has("last_successful_check")) p.put("last_successful_check", 0);
+            if (!p.has("last_failed_check")) p.put("last_failed_check", 0);
+            if (!p.has("last_check_error")) p.put("last_check_error", "");
+            if (!p.has("consecutive_failures")) p.put("consecutive_failures", 0);
+            if (!p.has("last_check_duration_ms")) p.put("last_check_duration_ms", 0);
             if (!p.has("last_in_stock")) p.put("last_in_stock", 0);
             if (!p.has("next_check")) p.put("next_check", 0);
         } catch (Exception ignored) {}
