@@ -10,6 +10,8 @@ import java.util.concurrent.*;
 public class MonitorService extends Service {
     public static final String ACTION_START = "com.tcgrestock.monitor.START";
     public static final String ACTION_STOP = "com.tcgrestock.monitor.STOP";
+    public static final String ACTION_SILENCE_ALERTS = "com.tcgrestock.monitor.SILENCE_ALERTS";
+    public static final String ACTION_DISMISS_ALERTS = "com.tcgrestock.monitor.DISMISS_ALERTS";
     public static final String CHANNEL_MONITOR = "monitor_service";
     public static final String CHANNEL_ALERTS = "restock_alerts";
     private static final int SERVICE_ID = 4701;
@@ -25,6 +27,16 @@ public class MonitorService extends Service {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             stopMonitoring();
             return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_DISMISS_ALERTS.equals(intent.getAction())) {
+            getSystemService(NotificationManager.class).cancel(4800);
+            if (!running) stopSelf(startId);
+            return running ? START_STICKY : START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_SILENCE_ALERTS.equals(intent.getAction())) {
+            silenceNotificationAlerts(intent.getStringExtra("alert_urls"));
+            if (!running) stopSelf(startId);
+            return running ? START_STICKY : START_NOT_STICKY;
         }
         if (!running) {
             running = true;
@@ -90,6 +102,10 @@ public class MonitorService extends Service {
                 boolean transitioned = currentlyInStock && confirmedInStock && !wasConfirmed;
                 boolean priceDrop = currentlyInStock && confirmedInStock && r.price != null
                         && snoozed(p,now) && lowerThanAlertPrice(p);
+                if (priceDrop) {
+                    p.put("snoozed_until", 0);
+                    p.put("silence_mode", "");
+                }
                 boolean priceRulesAllow = alertRulesAllow(p, settings, r.price);
                 boolean hadRuleState = p.has("last_alert_rules_allow")
                         && !p.isNull("last_alert_rules_allow");
@@ -152,6 +168,7 @@ public class MonitorService extends Service {
                     p.put("last_alert_reason", reason);
                     p.put("last_alert_seller", r.seller);
                     p.put("last_alert_confirmation_count", confirmationCount);
+                    if (r.price != null) p.put("last_alert_price", r.price);
                     alerts.add(p);
                 }
                 recordHistory(p, r.stock);
@@ -159,7 +176,15 @@ public class MonitorService extends Service {
         }
 
         Store.saveProducts(this, products);
-        if (!alerts.isEmpty()) postGroupedAlert(alerts);
+        if (!alerts.isEmpty()) saveTriggeredAlerts(alerts);
+        if (quietHoursActive(settings)) {
+            if (!alerts.isEmpty()) queueQuietAlerts(alerts);
+        } else {
+            ArrayList<JSONObject> ready = takePendingQuietAlerts();
+            ready.addAll(alerts);
+            ready = deduplicateAlerts(ready);
+            if (!ready.isEmpty()) postGroupedAlert(ready);
+        }
         updateServiceNotification(products.length());
         sendBroadcast(new Intent("com.tcgrestock.monitor.DATA_CHANGED").setPackage(getPackageName()));
     }
@@ -264,17 +289,65 @@ public class MonitorService extends Service {
         } catch (Exception ignored) {}
     }
 
+    private boolean quietHoursActive(JSONObject settings) {
+        Calendar calendar = Calendar.getInstance();
+        int minute = calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE);
+        int start = QuietHours.parseMinutes(settings.optString("quiet_hours_start", "22:00"));
+        int end = QuietHours.parseMinutes(settings.optString("quiet_hours_end", "07:00"));
+        return start >= 0 && end >= 0 && QuietHours.isQuiet(
+                settings.optBoolean("quiet_hours_enabled", false), minute, start, end);
+    }
+
+    private void queueQuietAlerts(ArrayList<JSONObject> items) {
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences("alerts", MODE_PRIVATE);
+            JSONArray pending = new JSONArray(prefs.getString("pending_quiet_items", "[]"));
+            ArrayList<JSONObject> combined = new ArrayList<>();
+            for (int i = 0; i < pending.length(); i++) {
+                JSONObject item = pending.optJSONObject(i);
+                if (item != null) combined.add(item);
+            }
+            for (JSONObject item : items) combined.add(new JSONObject(item.toString()));
+            JSONArray saved = new JSONArray();
+            for (JSONObject item : deduplicateAlerts(combined)) saved.put(item);
+            prefs.edit().putString("pending_quiet_items", saved.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    private ArrayList<JSONObject> takePendingQuietAlerts() {
+        ArrayList<JSONObject> items = new ArrayList<>();
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences("alerts", MODE_PRIVATE);
+            JSONArray pending = new JSONArray(prefs.getString("pending_quiet_items", "[]"));
+            for (int i = 0; i < pending.length(); i++) {
+                JSONObject item = pending.optJSONObject(i);
+                if (item != null) items.add(item);
+            }
+            prefs.edit().remove("pending_quiet_items").apply();
+        } catch (Exception ignored) {}
+        return items;
+    }
+
+    private ArrayList<JSONObject> deduplicateAlerts(ArrayList<JSONObject> items) {
+        LinkedHashMap<String, JSONObject> byProduct = new LinkedHashMap<>();
+        for (JSONObject item : items) {
+            String key = item.optString("url", item.optString("name", UUID.randomUUID().toString()));
+            byProduct.put(key, item);
+        }
+        return new ArrayList<>(byProduct.values());
+    }
+
     private void postGroupedAlert(ArrayList<JSONObject> items) {
-        saveTriggeredAlerts(items);
         try {
             Notification.InboxStyle style = new Notification.InboxStyle();
+            JSONArray alertUrls = new JSONArray();
             int max = Math.min(items.size(), 6);
             for (int i=0;i<max;i++) {
                 JSONObject p=items.get(i);
                 String price=p.has("current_price") ? String.format(Locale.US,"$%.2f",p.optDouble("current_price")) : "";
                 style.addLine(p.optString("name","Product")+" "+price);
-                if (p.has("current_price")) p.put("last_alert_price",p.getDouble("current_price"));
             }
+            for (JSONObject p : items) alertUrls.put(p.optString("url", ""));
             style.setSummaryText(items.size()+" item(s) available");
             Intent open = new Intent(this, MainActivity.class);
             open.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -285,15 +358,71 @@ public class MonitorService extends Service {
             PendingIntent pi = PendingIntent.getActivity(
                     this, 47, open,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            Intent silence = new Intent(this, MonitorService.class)
+                    .setAction(ACTION_SILENCE_ALERTS)
+                    .putExtra("alert_urls", alertUrls.toString());
+            PendingIntent silencePi = PendingIntent.getService(
+                    this, 48, silence,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            Intent dismiss = new Intent(this, MonitorService.class).setAction(ACTION_DISMISS_ALERTS);
+            PendingIntent dismissPi = PendingIntent.getService(
+                    this, 49, dismiss,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             Notification n = new Notification.Builder(this, CHANNEL_ALERTS)
                     .setSmallIcon(android.R.drawable.stat_notify_more)
                     .setContentTitle("TCG Restock Alert")
                     .setContentText(items.size()+" product(s) triggered")
                     .setStyle(style)
                     .setContentIntent(pi)
+                    .setDeleteIntent(dismissPi)
                     .setAutoCancel(true)
+                    .addAction(new Notification.Action.Builder(null,"Open",pi).build())
+                    .addAction(new Notification.Action.Builder(null,"Silence",silencePi).build())
+                    .addAction(new Notification.Action.Builder(null,"Dismiss",dismissPi).build())
                     .build();
             getSystemService(NotificationManager.class).notify(4800, n);
+        } catch (Exception ignored) {}
+    }
+
+    private void silenceNotificationAlerts(String rawUrls) {
+        long now = System.currentTimeMillis() / 1000L;
+        try {
+            HashSet<String> urls = new HashSet<>();
+            JSONArray parsed = new JSONArray(rawUrls == null ? "[]" : rawUrls);
+            for (int i = 0; i < parsed.length(); i++) urls.add(parsed.optString(i, ""));
+
+            JSONObject settings = Store.loadSettings(this);
+            int minutes = settings.optInt("notification_silence_minutes", 1440);
+            long until = SilenceRules.snoozedUntil(now, minutes);
+            String mode = SilenceRules.mode(minutes);
+            JSONArray products = Store.loadProducts(this);
+            for (int i = 0; i < products.length(); i++) {
+                JSONObject product = products.optJSONObject(i);
+                if (product == null || !urls.contains(product.optString("url", ""))) continue;
+                product.put("snoozed_until", until);
+                product.put("silence_mode", mode);
+                product.put("status", "IN STOCK — silenced");
+                if (product.has("current_price")
+                        && !product.optString("current_price", "").isEmpty()) {
+                    product.put("last_alert_price", product.getDouble("current_price"));
+                }
+            }
+            Store.saveProducts(this, products);
+
+            android.content.SharedPreferences prefs = getSharedPreferences("alerts", MODE_PRIVATE);
+            JSONArray triggered = new JSONArray(prefs.getString("triggered_items", "[]"));
+            for (int i = 0; i < triggered.length(); i++) {
+                JSONObject alert = triggered.optJSONObject(i);
+                if (alert == null || !urls.contains(alert.optString("url", ""))) continue;
+                if (!"active".equals(alert.optString("alert_state", "active"))) continue;
+                alert.put("alert_state", "silenced");
+                alert.put("silenced_at", now);
+                alert.put("silenced_until", until);
+                alert.put("silence_mode", mode);
+            }
+            prefs.edit().putString("triggered_items", triggered.toString()).apply();
+            getSystemService(NotificationManager.class).cancel(4800);
+            sendBroadcast(new Intent("com.tcgrestock.monitor.DATA_CHANGED").setPackage(getPackageName()));
         } catch (Exception ignored) {}
     }
 

@@ -40,6 +40,10 @@ public final class Store {
             defaults.put("global_alert_max_price", "");
             defaults.put("in_stock_confirmations_required", 2);
             defaults.put("verify_marketplace_sellers", true);
+            defaults.put("quiet_hours_enabled", false);
+            defaults.put("quiet_hours_start", "22:00");
+            defaults.put("quiet_hours_end", "07:00");
+            defaults.put("notification_silence_minutes", 1440);
             File f = new File(c.getFilesDir(), SETTINGS_FILE);
             if (!f.exists()) {
                 writeText(f, defaults.toString(2));
@@ -107,6 +111,7 @@ public final class Store {
             if (!p.has("msrp")) p.put("msrp", "");
             if (!p.has("current_price")) p.put("current_price", "");
             if (!p.has("snoozed_until")) p.put("snoozed_until", 0);
+            if (!p.has("silence_mode")) p.put("silence_mode", "");
             if (!p.has("last_alert_price")) p.put("last_alert_price", "");
             if (!p.has("paused")) p.put("paused", false);
             if (!p.has("check_interval")) p.put("check_interval", 30);
