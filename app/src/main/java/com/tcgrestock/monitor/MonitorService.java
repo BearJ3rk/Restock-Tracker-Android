@@ -40,6 +40,7 @@ public class MonitorService extends Service {
         }
         if (!running) {
             running = true;
+            updateRunningHealth(true);
             startForeground(SERVICE_ID, serviceNotification("Monitoring active"));
             scheduler.scheduleWithFixedDelay(this::checkCycle, 0, 15, TimeUnit.SECONDS);
         }
@@ -48,10 +49,14 @@ public class MonitorService extends Service {
 
     private void checkCycle() {
         if (!running) return;
+        long cycleStartedMs = System.currentTimeMillis();
         JSONArray products = Store.loadProducts(this);
         JSONObject settings = Store.loadSettings(this);
+        JSONObject health = Store.loadHealth(this);
         long now = System.currentTimeMillis() / 1000L;
         ArrayList<JSONObject> alerts = new ArrayList<>();
+        int checkedCount = 0;
+        int failedCount = 0;
         int confirmationsRequired = Math.max(1, Math.min(5,
                 settings.optInt("in_stock_confirmations_required", 2)));
 
@@ -68,15 +73,25 @@ public class MonitorService extends Service {
             String url = p.optString("url","");
             if (url.isEmpty()) continue;
             boolean wasConfirmed = p.optBoolean("last_confirmed_in_stock", false);
+            long checkStartedMs = System.currentTimeMillis();
             Detector.Result r = Detector.check(url);
+            checkedCount++;
 
             try {
                 p.put("last_checked", now);
+                p.put("last_check_duration_ms", System.currentTimeMillis() - checkStartedMs);
                 if (!r.error.isEmpty()) {
+                    failedCount++;
                     p.put("status", "Check failed");
+                    p.put("last_failed_check", now);
+                    p.put("last_check_error", r.error);
+                    p.put("consecutive_failures", p.optInt("consecutive_failures", 0) + 1);
                     if (!wasConfirmed) p.put("in_stock_confirmation_count", 0);
                     continue;
                 }
+                p.put("last_successful_check", now);
+                p.put("last_check_error", "");
+                p.put("consecutive_failures", 0);
                 if (r.price != null) p.put("current_price", r.price);
                 if (!r.seller.isEmpty()) p.put("last_seller", r.seller);
 
@@ -179,6 +194,17 @@ public class MonitorService extends Service {
         }
 
         Store.saveProducts(this, products);
+        try {
+            health.put("service_running", running);
+            health.put("last_cycle_started", cycleStartedMs / 1000L);
+            health.put("last_cycle_completed", System.currentTimeMillis() / 1000L);
+            health.put("last_cycle_duration_ms", System.currentTimeMillis() - cycleStartedMs);
+            health.put("products_checked", checkedCount);
+            health.put("successful_checks", checkedCount - failedCount);
+            health.put("failed_checks", failedCount);
+            health.put("total_products", products.length());
+            Store.saveHealth(this, health);
+        } catch (Exception ignored) {}
         if (!alerts.isEmpty()) saveTriggeredAlerts(alerts);
         if (quietHoursActive(settings)) {
             if (!alerts.isEmpty()) queueQuietAlerts(alerts);
@@ -456,6 +482,7 @@ public class MonitorService extends Service {
 
     private void stopMonitoring() {
         running=false;
+        updateRunningHealth(false);
         scheduler.shutdownNow();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
@@ -466,9 +493,20 @@ public class MonitorService extends Service {
 
     @Override public void onDestroy() {
         running=false;
+        updateRunningHealth(false);
         scheduler.shutdownNow();
         super.onDestroy();
     }
 
     @Override public android.os.IBinder onBind(Intent intent) { return null; }
+
+    private void updateRunningHealth(boolean isRunning) {
+        try {
+            JSONObject health = Store.loadHealth(this);
+            long now = System.currentTimeMillis() / 1000L;
+            health.put("service_running", isRunning);
+            health.put(isRunning ? "service_started_at" : "service_stopped_at", now);
+            Store.saveHealth(this, health);
+        } catch (Exception ignored) {}
+    }
 }
