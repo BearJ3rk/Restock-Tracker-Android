@@ -75,8 +75,23 @@ public class MonitorService extends Service {
                 if (r.stock == null) p.put("last", JSONObject.NULL); else p.put("last", r.stock);
 
                 boolean transitioned = Boolean.TRUE.equals(r.stock) && !Boolean.TRUE.equals(old);
-                boolean priceDrop = Boolean.TRUE.equals(r.stock) && snoozed(p,now) && lowerThanAlertPrice(p);
-                if ((transitioned || priceDrop) && alertRulesAllow(p)) alerts.add(p);
+                boolean priceDrop = Boolean.TRUE.equals(r.stock) && r.price != null
+                        && snoozed(p,now) && lowerThanAlertPrice(p);
+                boolean priceRulesAllow = alertRulesAllow(p, r.price);
+                boolean hadRuleState = p.has("last_alert_rules_allow")
+                        && !p.isNull("last_alert_rules_allow");
+                boolean becamePriceEligible = Boolean.TRUE.equals(r.stock)
+                        && priceRulesAllow && hadRuleState
+                        && !p.optBoolean("last_alert_rules_allow", false);
+
+                if (!hasPriceRule(p) || r.price != null) {
+                    p.put("last_alert_rules_allow", priceRulesAllow);
+                } else if (transitioned) {
+                    // Remember that an in-stock transition is waiting for a verified price.
+                    p.put("last_alert_rules_allow", false);
+                }
+
+                if ((transitioned || priceDrop || becamePriceEligible) && priceRulesAllow) alerts.add(p);
                 recordHistory(p, r.stock);
             } catch (Exception ignored) {}
         }
@@ -100,19 +115,28 @@ public class MonitorService extends Service {
         } catch (Exception e) { return false; }
     }
 
-    private boolean alertRulesAllow(JSONObject p) {
+    private boolean alertRulesAllow(JSONObject p, Double freshlyDetectedPrice) {
+        Double maximumPrice = optionalDouble(p, "alert_max_price");
+        Double msrp = optionalDouble(p, "msrp");
+        return AlertRules.priceAllowed(
+                freshlyDetectedPrice,
+                maximumPrice,
+                p.optBoolean("alert_at_or_below_msrp", false),
+                msrp);
+    }
+
+    private boolean hasPriceRule(JSONObject p) {
+        return optionalDouble(p, "alert_max_price") != null
+                || p.optBoolean("alert_at_or_below_msrp", false);
+    }
+
+    private Double optionalDouble(JSONObject p, String key) {
         try {
-            if (p.has("alert_max_price") && !p.optString("alert_max_price","").isEmpty()
-                    && p.has("current_price")) {
-                if (p.getDouble("current_price") > p.getDouble("alert_max_price")) return false;
-            }
-            if (p.optBoolean("alert_at_or_below_msrp",false)
-                    && p.has("current_price") && p.has("msrp")
-                    && !p.optString("msrp","").isEmpty()) {
-                if (p.getDouble("current_price") > p.getDouble("msrp")) return false;
-            }
-        } catch (Exception ignored) {}
-        return true;
+            if (!p.has(key) || p.isNull(key) || p.optString(key, "").isEmpty()) return null;
+            return p.getDouble(key);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void recordHistory(JSONObject p, Boolean stock) {
@@ -150,6 +174,7 @@ public class MonitorService extends Service {
                 row.put("status", p.optString("status","IN STOCK"));
                 if (p.has("current_price")) row.put("current_price", p.opt("current_price"));
                 row.put("triggered_at", now);
+                row.put("alert_state", "active");
                 existing.put(row);
             }
 

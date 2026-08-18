@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build-debug-apk:
-    name: Build MV0.05 debug APK
+    name: Test and build MV0.06 debug APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -33,13 +33,13 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug --stacktrace
+      - name: Run unit tests and build debug APK
+        run: gradle --no-daemon testDebugUnitTest assembleDebug --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
-          name: TCG-Restock-Monitor-MV0.05-debug-apk
+          name: TCG-Restock-Monitor-MV0.06-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
