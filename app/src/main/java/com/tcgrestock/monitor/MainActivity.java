@@ -405,14 +405,8 @@ public class MainActivity extends Activity {
             LinearLayout actions = row();
             actions.addView(button("Open", v -> openProduct(p)),
                     new LinearLayout.LayoutParams(0, dp(48), 1));
-            actions.addView(button("Silence 24h", v -> {
-                try {
-                    p.put("snoozed_until", System.currentTimeMillis()/1000L + 86400);
-                    if (p.has("current_price")) p.put("last_alert_price", p.getDouble("current_price"));
-                    Store.saveProducts(this, products);
-                    reload();
-                } catch (Exception ignored) {}
-            }), new LinearLayout.LayoutParams(0, dp(48), 1));
+            actions.addView(button("Silence…", v -> showSilenceDialog(null, p)),
+                    new LinearLayout.LayoutParams(0, dp(48), 1));
             card.addView(actions);
             inStockPage.addView(card);
         }
@@ -527,6 +521,11 @@ public class MainActivity extends Activity {
         if (!reason.isEmpty()) details += "\nWhy: " + reason;
         if (silenced) {
             details += "\nSilenced: " + formatTime(alert.optLong("silenced_at", 0));
+            if ("until_price_drop".equals(alert.optString("silence_mode", ""))) {
+                details += "\nResumes: when the price drops";
+            } else if (alert.optLong("silenced_until", 0) > 0) {
+                details += "\nResumes: " + formatTime(alert.optLong("silenced_until", 0));
+            }
         } else {
             details += "\n" + p.optString("status", "IN STOCK");
         }
@@ -548,7 +547,7 @@ public class MainActivity extends Activity {
         LinearLayout actions1 = row();
         actions1.addView(button("Open Product", v -> openProduct(p)),
                 new LinearLayout.LayoutParams(0, dp(50), 1));
-        actions1.addView(button("Silence 24h", v -> silenceTriggeredAlert(alert, product)),
+        actions1.addView(button("Silence…", v -> silenceTriggeredAlert(alert, product)),
                 new LinearLayout.LayoutParams(0, dp(50), 1));
         card.addView(actions1);
 
@@ -563,13 +562,36 @@ public class MainActivity extends Activity {
     }
 
     private void silenceTriggeredAlert(JSONObject alert, JSONObject product) {
+        showSilenceDialog(alert, product);
+    }
+
+    private void showSilenceDialog(JSONObject alert, JSONObject product) {
+        int preferred = settings.optInt("notification_silence_minutes", 1440);
+        final int[] selected = {SilenceRules.optionIndex(preferred)};
+        new AlertDialog.Builder(this)
+                .setTitle("Silence alert")
+                .setSingleChoiceItems(SilenceRules.LABELS, selected[0],
+                        (dialog, which) -> selected[0] = which)
+                .setPositiveButton("Silence", (dialog, which) -> applySilence(
+                        alert, product, SilenceRules.MINUTE_OPTIONS[selected[0]]))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void applySilence(JSONObject alert, JSONObject product, int minutes) {
         long now = System.currentTimeMillis()/1000L;
+        long until = SilenceRules.snoozedUntil(now, minutes);
+        String mode = SilenceRules.mode(minutes);
         try {
-            alert.put("alert_state", "silenced");
-            alert.put("silenced_at", now);
-            alert.put("silenced_until", now + 86400);
+            if (alert != null) {
+                alert.put("alert_state", "silenced");
+                alert.put("silenced_at", now);
+                alert.put("silenced_until", until);
+                alert.put("silence_mode", mode);
+            }
             if (product != null) {
-                product.put("snoozed_until", now + 86400);
+                product.put("snoozed_until", until);
+                product.put("silence_mode", mode);
                 product.put("status", "IN STOCK — silenced");
                 if (product.has("current_price") && !product.optString("current_price", "").isEmpty()) {
                     product.put("last_alert_price", product.getDouble("current_price"));
@@ -831,6 +853,16 @@ public class MainActivity extends Activity {
         EditText confirmations=input("Consecutive in-stock checks required (1-5)",String.valueOf(settings.optInt("in_stock_confirmations_required",2)));confirmations.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);box.addView(confirmations);
         CheckBox sellers=new CheckBox(this);sellers.setText("Verify sellers on marketplace listings");sellers.setChecked(settings.optBoolean("verify_marketplace_sellers",true));box.addView(sellers);
         CheckBox snooze=new CheckBox(this);snooze.setText("Silence opened in-stock items for 24 hours");snooze.setChecked(settings.optBoolean("snooze_after_open_24h",true));box.addView(snooze);
+        CheckBox quietHours=new CheckBox(this);quietHours.setText("Delay alerts during quiet hours");quietHours.setChecked(settings.optBoolean("quiet_hours_enabled",false));box.addView(quietHours);
+        EditText quietStart=input("Quiet hours start (HH:mm)",settings.optString("quiet_hours_start","22:00"));box.addView(quietStart);
+        EditText quietEnd=input("Quiet hours end (HH:mm)",settings.optString("quiet_hours_end","07:00"));box.addView(quietEnd);
+        box.addView(text("Notification Silence button duration",13,true));
+        Spinner notificationSilence=new Spinner(this);
+        ArrayAdapter<String> silenceAdapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,SilenceRules.LABELS);
+        silenceAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        notificationSilence.setAdapter(silenceAdapter);
+        notificationSilence.setSelection(SilenceRules.optionIndex(settings.optInt("notification_silence_minutes",1440)));
+        box.addView(notificationSilence);
         new AlertDialog.Builder(this).setTitle("Settings").setView(settingsScroll).setPositiveButton("Save",(d,w)->{
             try{
                 settings.put("pokemon_refresh_seconds",Math.max(30,Integer.parseInt(poke.getText().toString().trim())));
@@ -844,9 +876,18 @@ public class MainActivity extends Activity {
                 settings.put("in_stock_confirmations_required",Math.max(1,Math.min(5,Integer.parseInt(confirmations.getText().toString().trim()))));
                 settings.put("verify_marketplace_sellers",sellers.isChecked());
                 settings.put("snooze_after_open_24h",snooze.isChecked());
+                String quietStartValue=quietStart.getText().toString().trim();
+                String quietEndValue=quietEnd.getText().toString().trim();
+                if(QuietHours.parseMinutes(quietStartValue)<0 || QuietHours.parseMinutes(quietEndValue)<0)
+                    throw new IllegalArgumentException("Use HH:mm time format");
+                settings.put("quiet_hours_enabled",quietHours.isChecked());
+                settings.put("quiet_hours_start",quietStartValue);
+                settings.put("quiet_hours_end",quietEndValue);
+                settings.put("notification_silence_minutes",
+                        SilenceRules.MINUTE_OPTIONS[notificationSilence.getSelectedItemPosition()]);
                 Store.saveSettings(this,settings);schedulePokemon();
                 Toast.makeText(this,"Settings saved",Toast.LENGTH_SHORT).show();
-            }catch(Exception e){Toast.makeText(this,"Check the price and confirmation values",Toast.LENGTH_SHORT).show();}
+            }catch(Exception e){Toast.makeText(this,"Check prices, confirmations, and HH:mm quiet times",Toast.LENGTH_SHORT).show();}
         }).setNegativeButton("Cancel",null).show();
     }
 
