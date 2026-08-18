@@ -22,6 +22,7 @@ public class MainActivity extends Activity {
     private LinearLayout root, listBox;
     private LinearLayout screen, contentHost, productsPage, inStockPage, triggeredPage, activityPage, settingsPage;
     private JSONArray triggeredItems = new JSONArray();
+    private boolean silencedAlertsExpanded = false;
     private TextView activityText;
     private TextView pokemonName, pokemonFact, monitorState, updateStatus;
     private ImageView pokemonImage;
@@ -426,7 +427,7 @@ public class MainActivity extends Activity {
         triggeredPage.removeAllViews();
 
         LinearLayout headingRow = row();
-        TextView heading = text("Triggered Alerts", 18, true);
+        TextView heading = text("Alerts", 18, true);
         Button clear = button("Clear", v -> {
             triggeredItems = new JSONArray();
             saveTriggeredItems();
@@ -445,48 +446,204 @@ public class MainActivity extends Activity {
             return;
         }
 
+        ArrayList<JSONObject> currentAlerts = new ArrayList<>();
+        ArrayList<JSONObject> silencedAlerts = new ArrayList<>();
+        boolean migrated = false;
+
         for (int i = triggeredItems.length() - 1; i >= 0; i--) {
             JSONObject alert = triggeredItems.optJSONObject(i);
             if (alert == null) continue;
-
-            String url = alert.optString("url", "");
-            JSONObject product = findProductByUrl(url);
-            final JSONObject p = product != null ? product : alert;
-            final String productUrl = url;
-
-            LinearLayout card = panel();
-            card.addView(text(p.optString("name", "Product"), 16, true));
-
-            String price = p.has("current_price") && !p.optString("current_price","").isEmpty()
-                    ? String.format(Locale.US, "$%.2f", p.optDouble("current_price")) : "—";
-            card.addView(text(
-                    "Triggered: " + formatTime(alert.optLong("triggered_at", 0))
-                    + "\n" + p.optString("status","IN STOCK")
-                    + "\nPrice: " + price,
-                    13, false));
-
-            LinearLayout actions1 = row();
-            actions1.addView(button("Open Product", v -> openProduct(p)),
-                    new LinearLayout.LayoutParams(0, dp(50), 1));
-            actions1.addView(button("Silence 24h", v -> {
+            String state = alert.optString("alert_state", "");
+            if (state.isEmpty()) {
+                JSONObject product = findProductByUrl(alert.optString("url", ""));
+                boolean alreadySnoozed = product != null
+                        && product.optLong("snoozed_until", 0) > System.currentTimeMillis()/1000L;
                 try {
-                    p.put("snoozed_until", System.currentTimeMillis()/1000L + 86400);
-                    if (p.has("current_price")) p.put("last_alert_price", p.getDouble("current_price"));
-                    Store.saveProducts(this, products);
-                    reload();
+                    state = alreadySnoozed ? "silenced" : "active";
+                    alert.put("alert_state", state);
+                    if (alreadySnoozed) {
+                        alert.put("silenced_at", Math.max(
+                                alert.optLong("triggered_at", 0),
+                                product.optLong("snoozed_until", 0) - 86400));
+                        alert.put("silenced_until", product.optLong("snoozed_until", 0));
+                    }
+                    migrated = true;
                 } catch (Exception ignored) {}
-            }), new LinearLayout.LayoutParams(0, dp(50), 1));
-            card.addView(actions1);
-
-            LinearLayout actions2 = row();
-            actions2.addView(button("Go to Product", v -> goToTriggeredProduct(productUrl)),
-                    new LinearLayout.LayoutParams(0, dp(50), 1));
-            actions2.addView(button("History", v -> showHistory(p)),
-                    new LinearLayout.LayoutParams(0, dp(50), 1));
-            card.addView(actions2);
-
-            triggeredPage.addView(card);
+            }
+            if ("silenced".equals(state)) silencedAlerts.add(alert);
+            else currentAlerts.add(alert);
         }
+
+        if (migrated) saveTriggeredItems();
+
+        triggeredPage.addView(text("Current Alerts (" + currentAlerts.size() + ")", 16, true));
+        if (currentAlerts.isEmpty()) {
+            triggeredPage.addView(text("No current alerts.", 14, false));
+        } else {
+            for (JSONObject alert : currentAlerts) {
+                triggeredPage.addView(buildTriggeredAlertCard(alert, false));
+            }
+        }
+
+        LinearLayout silencedHeading = row();
+        TextView silencedTitle = text("Silenced Alerts (" + silencedAlerts.size() + ")", 16, true);
+        silencedHeading.addView(silencedTitle, new LinearLayout.LayoutParams(0, dp(48), 1));
+        if (!silencedAlerts.isEmpty()) {
+            Button toggle = button(silencedAlertsExpanded ? "Hide" : "Show", v -> {
+                silencedAlertsExpanded = !silencedAlertsExpanded;
+                renderTriggeredPage();
+            });
+            silencedHeading.addView(toggle, new LinearLayout.LayoutParams(dp(90), dp(48)));
+        }
+        triggeredPage.addView(silencedHeading);
+
+        if (silencedAlerts.isEmpty()) {
+            triggeredPage.addView(text("Silenced alerts will be kept here.", 13, false));
+        } else if (!silencedAlertsExpanded) {
+            triggeredPage.addView(text("Tap Show to view silenced alert history.", 13, false));
+        } else {
+            for (JSONObject alert : silencedAlerts) {
+                triggeredPage.addView(buildTriggeredAlertCard(alert, true));
+            }
+        }
+    }
+
+    private LinearLayout buildTriggeredAlertCard(JSONObject alert, boolean silenced) {
+        String url = alert.optString("url", "");
+        JSONObject product = findProductByUrl(url);
+        final JSONObject p = product != null ? product : alert;
+
+        LinearLayout card = panel();
+        card.addView(text(p.optString("name", "Product"), silenced ? 15 : 16, true));
+
+        String price = p.has("current_price") && !p.optString("current_price","").isEmpty()
+                ? String.format(Locale.US, "$%.2f", p.optDouble("current_price")) : "—";
+        String details = "Triggered: " + formatTime(alert.optLong("triggered_at", 0))
+                + "\nPrice: " + price
+                + "   Alert price: " + alertPriceLabel(p);
+        if (silenced) {
+            details += "\nSilenced: " + formatTime(alert.optLong("silenced_at", 0));
+        } else {
+            details += "\n" + p.optString("status", "IN STOCK");
+        }
+        card.addView(text(details, 13, false));
+
+        if (silenced) {
+            LinearLayout actions = row();
+            actions.addView(button("Open", v -> openProduct(p)),
+                    new LinearLayout.LayoutParams(0, dp(50), 1));
+            Button priceButton = button("Alert Price", v -> showAlertPriceDialog(product));
+            priceButton.setEnabled(product != null);
+            actions.addView(priceButton, new LinearLayout.LayoutParams(0, dp(50), 1));
+            actions.addView(button("History", v -> showHistory(p)),
+                    new LinearLayout.LayoutParams(0, dp(50), 1));
+            card.addView(actions);
+            return card;
+        }
+
+        LinearLayout actions1 = row();
+        actions1.addView(button("Open Product", v -> openProduct(p)),
+                new LinearLayout.LayoutParams(0, dp(50), 1));
+        actions1.addView(button("Silence 24h", v -> silenceTriggeredAlert(alert, product)),
+                new LinearLayout.LayoutParams(0, dp(50), 1));
+        card.addView(actions1);
+
+        LinearLayout actions2 = row();
+        Button priceButton = button("Alert Price", v -> showAlertPriceDialog(product));
+        priceButton.setEnabled(product != null);
+        actions2.addView(priceButton, new LinearLayout.LayoutParams(0, dp(50), 1));
+        actions2.addView(button("History", v -> showHistory(p)),
+                new LinearLayout.LayoutParams(0, dp(50), 1));
+        card.addView(actions2);
+        return card;
+    }
+
+    private void silenceTriggeredAlert(JSONObject alert, JSONObject product) {
+        long now = System.currentTimeMillis()/1000L;
+        try {
+            alert.put("alert_state", "silenced");
+            alert.put("silenced_at", now);
+            alert.put("silenced_until", now + 86400);
+            if (product != null) {
+                product.put("snoozed_until", now + 86400);
+                product.put("status", "IN STOCK — silenced");
+                if (product.has("current_price") && !product.optString("current_price", "").isEmpty()) {
+                    product.put("last_alert_price", product.getDouble("current_price"));
+                }
+                Store.saveProducts(this, products);
+            }
+            saveTriggeredItems();
+            silencedAlertsExpanded = false;
+            reload();
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not silence alert", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private String alertPriceLabel(JSONObject p) {
+        if (p != null && p.has("alert_max_price") && !p.optString("alert_max_price", "").isEmpty()) {
+            String label = String.format(Locale.US, "$%.2f max", p.optDouble("alert_max_price"));
+            if (p.optBoolean("alert_at_or_below_msrp", false)) label += " + MSRP";
+            return label;
+        }
+        if (p != null && p.optBoolean("alert_at_or_below_msrp", false)) return "MSRP or less";
+        return "Any price";
+    }
+
+    private void showAlertPriceDialog(JSONObject product) {
+        if (product == null) {
+            Toast.makeText(this, "This product is no longer in the product list", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(8), dp(18), 0);
+        box.addView(text(
+                "Only notify when a freshly detected price is at or below your limit.",
+                13, false));
+        EditText maxPrice = input("Maximum alert price", product.optString("alert_max_price", ""));
+        maxPrice.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
+                | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        box.addView(maxPrice);
+        CheckBox atMsrp = new CheckBox(this);
+        atMsrp.setText("Also require price at or below MSRP");
+        atMsrp.setChecked(product.optBoolean("alert_at_or_below_msrp", false));
+        box.addView(atMsrp);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Alert Price")
+                .setView(box)
+                .setPositiveButton("Save", (d, w) -> {
+                    try {
+                        String raw = maxPrice.getText().toString().trim().replace("$", "");
+                        if (raw.isEmpty()) product.put("alert_max_price", "");
+                        else {
+                            double value = Double.parseDouble(raw);
+                            if (value <= 0) throw new IllegalArgumentException("Price must be positive");
+                            product.put("alert_max_price", value);
+                        }
+                        product.put("alert_at_or_below_msrp", atMsrp.isChecked());
+                        product.remove("last_alert_rules_allow");
+                        Store.saveProducts(this, products);
+                        renderTriggeredPage();
+                        Toast.makeText(this, "Alert price saved", Toast.LENGTH_SHORT).show();
+                    } catch (Exception e) {
+                        Toast.makeText(this, "Enter a valid price", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNeutralButton("No Limit", (d, w) -> {
+                    try {
+                        product.put("alert_max_price", "");
+                        product.put("alert_at_or_below_msrp", false);
+                        product.remove("last_alert_rules_allow");
+                        Store.saveProducts(this, products);
+                        renderTriggeredPage();
+                        Toast.makeText(this, "Price limit removed", Toast.LENGTH_SHORT).show();
+                    } catch (Exception ignored) {}
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private JSONObject findProductByUrl(String url) {

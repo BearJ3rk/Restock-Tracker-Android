@@ -1,3 +1,13 @@
+TCG Restock Monitor MV0.06 — Alert Organization and Price Controls
+
+NEW IN MV0.06
+-------------
+- Current alerts remain at the top of the Alerts tab.
+- Silencing an alert moves it into a collapsible Silenced Alerts group below current alerts.
+- Alert cards now show their configured price limit and provide a direct Alert Price action.
+- Price-limited alerts require a fresh detected price, preventing alerts based on missing or stale prices.
+- Products that become affordable while still in stock can alert when they cross below the configured limit.
+
 TCG Restock Monitor MV0.05 — Alert Deep-Link Update
 
 NEW IN MV0.05
@@ -72,7 +82,7 @@ WHAT IS INCLUDED
 
 INSTALL / BUILD
 1. Install Android Studio on Windows, macOS, or Linux.
-2. Open the TCG_Restock_Monitor_MV0.05_Android folder.
+2. Open the TCG_Restock_Monitor_MV0.06_Android folder.
 3. Allow Android Studio to install the requested SDK / build tools and accept Google's SDK licenses.
 4. Choose Build > Build APK(s).
 5. The debug APK is normally created at:
@@ -91,4 +101,4 @@ DATA
 Android stores products.json, settings.json, and price_history.json in the app's private files directory.
 Deleting the app normally deletes those files unless Android backup restores them.
 
-This is a pre-release MV0.05 build and is intended for personal sideload/testing.
+This is a pre-release MV0.06 build and is intended for personal sideload/testing.

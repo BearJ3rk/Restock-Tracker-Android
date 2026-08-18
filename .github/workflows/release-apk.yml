@@ -40,6 +40,9 @@ jobs:
             exit 1
           fi
 
+      - name: Run unit tests
+        run: gradle --no-daemon testDebugUnitTest --stacktrace
+
       - name: Restore release signing key
         shell: bash
         env:
