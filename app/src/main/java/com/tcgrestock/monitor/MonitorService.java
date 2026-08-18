@@ -107,6 +107,7 @@ public class MonitorService extends Service {
                     p.put("silence_mode", "");
                 }
                 boolean priceRulesAllow = alertRulesAllow(p, settings, r.price);
+                boolean alertsEnabled = p.optBoolean("alerts_enabled", true);
                 boolean hadRuleState = p.has("last_alert_rules_allow")
                         && !p.isNull("last_alert_rules_allow");
                 boolean becamePriceEligible = currentlyInStock && confirmedInStock
@@ -147,6 +148,8 @@ public class MonitorService extends Service {
                         p.put("status", r.price == null
                                 ? "IN STOCK — waiting for verified price"
                                 : "IN STOCK — above price limit");
+                    } else if (!alertsEnabled) {
+                        p.put("status", "IN STOCK — alerts off");
                     } else {
                         p.put("status", snoozed(p,now)
                                 ? "IN STOCK — silenced" : "IN STOCK — confirmed");
@@ -158,7 +161,7 @@ public class MonitorService extends Service {
                 }
 
                 if ((transitioned || priceDrop || becamePriceEligible || becameSellerEligible)
-                        && priceRulesAllow && sellerAllowed) {
+                        && priceRulesAllow && sellerAllowed && alertsEnabled) {
                     String reason;
                     if (priceDrop) reason = "Lower price detected during silence";
                     else if (becamePriceEligible) reason = "Price moved within the alert limit";
