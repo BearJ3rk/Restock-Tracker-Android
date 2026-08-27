@@ -1,6 +1,6 @@
 # TCG Restock Monitor for Android
 
-Native Android restock and price monitor for selected Pokemon, One Piece, and other trading-card products. The current mobile build is **MV0.12**.
+Native Android restock and price monitor for selected Pokemon, One Piece, and other trading-card products. The current mobile build is **MV0.13**.
 
 ## Install and update
 
@@ -9,6 +9,8 @@ Signed, installable versions are published on the repository's **Releases** page
 For the first installation, allow **Install unknown apps** for the app used to open the APK. For an in-app update, Android may ask once to allow TCG Restock Monitor to request installations. Android always controls the final installation confirmation.
 
 > The original v0.01 debug APK used an ephemeral debug certificate. Uninstall it once before installing any signed v0.02-or-newer release. Beginning with v0.02, releases use the same protected signing key and install over one another without deleting app data.
+
+MV0.13 removes all 62 legacy bundled products so new installs start empty. Existing installs receive a one-time cleanup of those exact built-in URLs and their stale alert/history records while custom products are preserved.
 
 MV0.12 adds System default, Light, and Dark appearance modes in App Settings. The selected palette covers screens, cards, text, dialogs, controls, and Android system bars.
 
