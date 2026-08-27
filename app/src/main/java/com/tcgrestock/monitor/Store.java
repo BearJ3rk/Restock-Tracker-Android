@@ -7,23 +7,77 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public final class Store {
+    private static final String BUILT_IN_CLEANUP_V013 = "built_in_cleanup_v013";
     private Store() {}
     public static final String PRODUCTS_FILE = "products.json";
     public static final String SETTINGS_FILE = "settings.json";
     public static final String HISTORY_FILE = "price_history.json";
     public static final String HEALTH_FILE = "monitoring_health.json";
 
-    public static JSONArray loadProducts(Context c) {
+    public static synchronized JSONArray loadProducts(Context c) {
         try {
             File f = new File(c.getFilesDir(), PRODUCTS_FILE);
             if (!f.exists()) {
                 String seed = readAsset(c, "default_products.json");
                 writeText(f, seed);
             }
-            return new JSONArray(readText(f));
+            JSONArray products = new JSONArray(readText(f));
+            return removeLegacyBuiltIns(c, f, products);
         } catch (Exception e) {
             return new JSONArray();
         }
+    }
+
+    private static JSONArray removeLegacyBuiltIns(Context c, File productsFile, JSONArray products)
+            throws Exception {
+        android.content.SharedPreferences migrations = c.getSharedPreferences(
+                "data_migrations", Context.MODE_PRIVATE);
+        if (migrations.getBoolean(BUILT_IN_CLEANUP_V013, false)) return products;
+
+        JSONArray legacyUrls = new JSONArray(readAsset(c, "legacy_builtin_urls_v012.json"));
+        Set<String> builtInUrls = BuiltInCleanup.urlSet(legacyUrls);
+        JSONArray keptProducts = BuiltInCleanup.withoutProducts(products, builtInUrls);
+        int removedCount = products.length() - keptProducts.length();
+        writeText(productsFile, keptProducts.toString(2));
+
+        File historyFile = new File(c.getFilesDir(), HISTORY_FILE);
+        if (historyFile.exists()) {
+            try {
+                JSONObject history = new JSONObject(readText(historyFile));
+                writeText(historyFile, BuiltInCleanup.withoutHistory(history, builtInUrls).toString(2));
+            } catch (Exception ignored) {}
+        }
+
+        android.content.SharedPreferences alerts = c.getSharedPreferences(
+                "alerts", Context.MODE_PRIVATE);
+        try {
+            JSONArray triggered = new JSONArray(alerts.getString("triggered_items", "[]"));
+            JSONArray pending = new JSONArray(alerts.getString("pending_quiet_items", "[]"));
+            alerts.edit()
+                    .putString("triggered_items",
+                            BuiltInCleanup.withoutAlerts(triggered, builtInUrls).toString())
+                    .putString("pending_quiet_items",
+                            BuiltInCleanup.withoutAlerts(pending, builtInUrls).toString())
+                    .apply();
+        } catch (Exception ignored) {
+            alerts.edit().remove("triggered_items").remove("pending_quiet_items").apply();
+        }
+
+        migrations.edit()
+                .putBoolean(BUILT_IN_CLEANUP_V013, true)
+                .putInt("built_in_cleanup_removed_count", removedCount)
+                .putBoolean("built_in_cleanup_notice_pending", removedCount > 0)
+                .apply();
+        return keptProducts;
+    }
+
+    public static int consumeBuiltInCleanupCount(Context c) {
+        android.content.SharedPreferences migrations = c.getSharedPreferences(
+                "data_migrations", Context.MODE_PRIVATE);
+        if (!migrations.getBoolean("built_in_cleanup_notice_pending", false)) return 0;
+        int count = migrations.getInt("built_in_cleanup_removed_count", 0);
+        migrations.edit().putBoolean("built_in_cleanup_notice_pending", false).apply();
+        return count;
     }
 
     public static synchronized void saveProducts(Context c, JSONArray a) {

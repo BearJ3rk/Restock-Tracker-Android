@@ -63,6 +63,12 @@ public class MainActivity extends Activity {
         updateManager = new UpdateManager(this);
         buildUi();
         reload();
+        int removedBuiltIns = Store.consumeBuiltInCleanupCount(this);
+        if (removedBuiltIns > 0) {
+            getSystemService(NotificationManager.class).cancel(4800);
+            Toast.makeText(this, "Removed " + removedBuiltIns
+                    + " built-in products. Custom products were kept.", Toast.LENGTH_LONG).show();
+        }
         IntentFilter dataFilter = new IntentFilter("com.tcgrestock.monitor.DATA_CHANGED");
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(dataReceiver, dataFilter, Context.RECEIVER_NOT_EXPORTED);
